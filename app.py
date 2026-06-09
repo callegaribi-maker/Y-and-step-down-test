@@ -452,8 +452,9 @@ with btn_col2:
 
             s_k    = try_numeric(raw_synced[kinem_ref][l5_kinem_col]).abs()
             peak_k = int(s_k.iloc[:janela_samp].idxmax())
-            st.session_state.peak_ref = peak_k
-            st.session_state.synced   = True
+            st.session_state.peak_ref     = peak_k
+            st.session_state.synced       = True
+            st.session_state.show_preview = False   # fecha preview ao sincronizar
             msgs_sync.append(f"**Kinem** — pico @ {peak_k} ({peak_k/fs_target:.2f} s)")
 
             if l5_acc != NONE and l5_acc_col and l5_acc_col in raw_synced.get(l5_acc, pd.DataFrame()).columns:
@@ -584,6 +585,9 @@ if st.session_state.synced and st.session_state.raw_synced and st.session_state.
 
     _render_verif("L5",     l5_kinem_col,   l5_acc,   l5_acc_col,   "Kinem L5",     "ACC L5")
     _render_verif("Joelho", knee_kinem_col, knee_acc, knee_acc_col, "Kinem Joelho", "ACC Joelho")
+
+    if not st.session_state.proc_data:
+        st.info("✅ Sincronização OK — escolha os parâmetros de processamento na coluna à esquerda (seção 6) e clique em **🔧 Processar**.")
     st.divider()
 
 # ──────────────────────────────────────────────
