@@ -536,6 +536,13 @@ if plot_mode == "Personalizado":
     else:
         st.info("Selecione colunas na seção acima para configurar os grupos.")
 
+vc1, vc2 = st.columns(2)
+with vc1:
+    view_start = st.number_input("Mostrar a partir de (s)", value=0.0, step=1.0, key="view_start",
+                                  help="Ex: 2 para pular o pico do salto. 0 = início.")
+with vc2:
+    view_end = st.number_input("Mostrar até (s)  — 0 = fim", value=0.0, step=1.0, key="view_end")
+
 if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_width=True):
 
     if not st.session_state.proc_data:
@@ -556,7 +563,10 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
     x_axis  = x_samp / target_fs if x_unit == "Segundos" else x_samp
     x_label = ("Tempo (s)  —  0 = pico do salto" if x_unit == "Segundos"
                 else "Amostra  —  0 = pico do salto")
-    x_min, x_max = float(x_axis.min()), float(x_axis.max())
+    x_min_data, x_max_data = float(x_axis.min()), float(x_axis.max())
+    # Aplica janela de visualização definida pelo usuário
+    x_min = view_start if view_start != 0.0 else x_min_data
+    x_max = view_end   if view_end   >  view_start else x_max_data
 
     traces = []
     for fname, df in aligned_data.items():
