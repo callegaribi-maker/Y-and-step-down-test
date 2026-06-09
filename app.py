@@ -212,37 +212,64 @@ def find_highest_peak(series, search_end, fs=100.0):
     return int(peaks[np.argmax(vals[peaks])])
 
 
+def _local_corr(kinem_vals, phone_vals, kinem_peak, phone_peak, fs):
+    """
+    Correlação de Pearson entre os envelopes num janela de ±1 s
+    ao redor dos picos correspondentes. Retorna valor em [0, 1].
+    """
+    win = int(fs)   # ±1 s
+    k_v = kinem_vals
+    p_v = phone_vals
+    ks  = max(0, kinem_peak - win);  ke = min(len(k_v), kinem_peak + win)
+    ps  = max(0, phone_peak  - win);  pe = min(len(p_v), phone_peak  + win)
+    k_seg = _impact_envelope(k_v[ks:ke], fs)
+    p_seg = _impact_envelope(p_v[ps:pe], fs)
+    n = min(len(k_seg), len(p_seg))
+    if n < 4:
+        return 0.0
+    k_seg, p_seg = k_seg[:n], p_seg[:n]
+    if k_seg.std() == 0 or p_seg.std() == 0:
+        return 0.0
+    return float(abs(np.corrcoef(k_seg, p_seg)[0, 1]))
+
+
 def find_sync_xcorr(kinem_ser, phone_ser, kinem_peak, search_end, fs):
     """
-    Encontra a amostra de phone_ser que corresponde a kinem_peak.
-    Usa xcorr de envelopes highpass num template ±2 s ao redor de kinem_peak.
-    A busca no phone cobre TODOS os search_end samples para não depender
-    da estimativa de pico. Fallback: find_highest_peak.
+    Gera dois candidatos para o pico de impacto no phone:
+      - p_simple: pico de maior amplitude no sinal completo (highpass)
+      - p_xcorr:  pico encontrado por correlação cruzada de envelopes
+    Escolhe o candidato com maior correlação local com o Kinem no instante do impacto.
     """
-    # Template Kinem: ±2 s ao redor do peak de referência
-    half_tpl = int(2 * fs)
-    k_start  = max(0, kinem_peak - half_tpl)
-    k_end    = min(len(kinem_ser), kinem_peak + half_tpl)
-    k_vals   = try_numeric(kinem_ser).fillna(0).values[k_start:k_end].astype(float)
-
+    k_vals = try_numeric(kinem_ser).fillna(0).values.astype(float)
     p_vals = try_numeric(phone_ser).fillna(0).values[:search_end].astype(float)
 
-    # Precisa phone >= template para mode='valid' funcionar corretamente
-    if len(p_vals) < len(k_vals) + 1 or len(k_vals) < 4:
-        return find_highest_peak(phone_ser, search_end, fs)
+    # Candidato 1 — pico global highpass
+    p_simple = find_highest_peak(pd.Series(p_vals), len(p_vals), fs)
 
-    ref_env   = _impact_envelope(k_vals,  fs)
-    phone_env = _impact_envelope(p_vals,  fs)
+    # Candidato 2 — xcorr
+    half_tpl = int(2 * fs)
+    k_start  = max(0, kinem_peak - half_tpl)
+    k_end    = min(len(k_vals), kinem_peak + half_tpl)
+    k_seg    = k_vals[k_start:k_end]
 
-    # mode='valid': len(phone_env) >= len(ref_env) garantido acima
-    corr    = np.correlate(phone_env, ref_env, mode="valid")
-    lag     = int(np.argmax(corr))
-    # lag=0 → phone[0:len(ref)] alinha com ref → peak do template (kinem_peak-k_start) fica no índice (lag + kinem_peak - k_start)
-    p_xcorr = lag + (kinem_peak - k_start)
+    p_xcorr = None
+    if len(p_vals) >= len(k_seg) + 1 and len(k_seg) >= 4:
+        ref_env   = _impact_envelope(k_seg,  fs)
+        phone_env = _impact_envelope(p_vals, fs)
+        corr      = np.correlate(phone_env, ref_env, mode="valid")
+        lag       = int(np.argmax(corr))
+        candidate = lag + (kinem_peak - k_start)
+        if 0 <= candidate < search_end:
+            p_xcorr = candidate
 
-    if 0 <= p_xcorr < search_end:
-        return p_xcorr
-    return find_highest_peak(phone_ser, search_end, fs)
+    if p_xcorr is None:
+        return p_simple
+
+    # Escolhe o candidato com maior correlação local
+    c_simple = _local_corr(k_vals, p_vals, kinem_peak, p_simple, fs)
+    c_xcorr  = _local_corr(k_vals, p_vals, kinem_peak, p_xcorr,  fs)
+
+    return p_xcorr if c_xcorr > c_simple else p_simple
 
 
 def apply_lowpass(df, fs, cutoff_hz, order=4):
