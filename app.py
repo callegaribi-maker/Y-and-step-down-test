@@ -182,6 +182,26 @@ def apply_detrend(df):
     return result
 
 
+def find_highest_peak(series, search_end):
+    """
+    Retorna o índice do pico de maior valor absoluto dentro das primeiras
+    search_end amostras. Usa find_peaks para garantir que é um pico real
+    (não drift). Fallback para idxmax se nenhum pico for encontrado.
+    """
+    vals = series.abs().fillna(0).values[:search_end]
+    if len(vals) == 0:
+        return 0
+    max_val = vals.max()
+    if max_val == 0:
+        return int(np.argmax(vals))
+    # Exige proeminência mínima de 20% do pico máximo
+    peaks, _ = sp_signal.find_peaks(vals, prominence=max_val * 0.20)
+    if len(peaks) == 0:
+        return int(np.argmax(vals))
+    # Retorna o pico de maior amplitude
+    return int(peaks[np.argmax(vals[peaks])])
+
+
 def apply_lowpass(df, fs, cutoff_hz, order=4):
     result = df.copy()
     nyq = fs / 2.0
@@ -450,8 +470,8 @@ with btn_col3:
             msgs_sync   = []
 
             # ── Referência L5: pico do Kinem L5 a(Z) → define x=0 global ──
-            s_k_l5 = try_numeric(raw_synced[kinem_ref][l5_kinem_col]).abs()
-            peak_k = int(s_k_l5.iloc[:janela_samp].idxmax())
+            s_k_l5 = try_numeric(raw_synced[kinem_ref][l5_kinem_col])
+            peak_k = find_highest_peak(s_k_l5, janela_samp)
             st.session_state.peak_ref     = peak_k
             st.session_state.synced       = True
             st.session_state.show_preview = False
@@ -460,16 +480,16 @@ with btn_col3:
             # ── Referência Joelho: pico do Côndilo a(Z) ──
             # Busca dentro de ±1 s ao redor do peak_k para garantir mesmo evento
             win = int(1.0 * fs_target)
-            s_k_knee  = try_numeric(raw_synced[kinem_ref][knee_kinem_col]).abs()
+            s_k_knee  = try_numeric(raw_synced[kinem_ref][knee_kinem_col])
             k_start   = max(0, peak_k - win)
             k_end     = min(len(s_k_knee), peak_k + win)
-            peak_knee = int(s_k_knee.iloc[k_start:k_end].idxmax())
+            peak_knee = find_highest_peak(s_k_knee.iloc[k_start:k_end].reset_index(drop=True), k_end - k_start) + k_start
             msgs_sync.append(f"**Kinem Joelho (Côndilo)** — pico @ {peak_knee} ({peak_knee/fs_target:.2f} s) → Δ {(peak_knee-peak_k)/fs_target:+.3f} s")
 
             # ── L5 ACC sincroniza com pico do Kinem L5 ──
             if l5_acc != NONE and l5_acc_col and l5_acc_col in raw_synced.get(l5_acc, pd.DataFrame()).columns:
-                s = try_numeric(raw_synced[l5_acc][l5_acc_col]).abs()
-                p = int(s.iloc[:janela_samp].idxmax())
+                s = try_numeric(raw_synced[l5_acc][l5_acc_col])
+                p = find_highest_peak(s, janela_samp)
                 offsets[l5_acc] = peak_k - p
                 msgs_sync.append(f"**L5 ACC** — pico @ {p} ({p/fs_target:.2f} s) → offset {peak_k-p:+d}")
                 if l5_gyr != NONE:
@@ -478,8 +498,8 @@ with btn_col3:
 
             # ── Joelho ACC sincroniza com pico do Côndilo ──
             if knee_acc != NONE and knee_acc_col and knee_acc_col in raw_synced.get(knee_acc, pd.DataFrame()).columns:
-                s = try_numeric(raw_synced[knee_acc][knee_acc_col]).abs()
-                p = int(s.iloc[:janela_samp].idxmax())
+                s = try_numeric(raw_synced[knee_acc][knee_acc_col])
+                p = find_highest_peak(s, janela_samp)
                 offsets[knee_acc] = peak_knee - p
                 msgs_sync.append(f"**Joelho ACC** — pico @ {p} ({p/fs_target:.2f} s) → offset {peak_knee-p:+d}")
                 if knee_gyr != NONE:
