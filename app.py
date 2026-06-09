@@ -206,31 +206,40 @@ def find_highest_peak(series, search_end):
 
 def find_sync_xcorr(kinem_ser, phone_ser, kinem_peak, search_end, fs):
     """
-    Encontra a amostra de phone_ser que corresponde a kinem_peak
-    via correlação cruzada de envelopes — robusto a DC, drift e
-    diferenças de eixo entre Kinem e ACC do celular.
-    Fallback: find_highest_peak.
+    Encontra a amostra de phone_ser que corresponde a kinem_peak.
+    Estratégia:
+      1. find_highest_peak → estimativa grosseira p_peak
+      2. xcorr de envelopes numa janela ±3 s ao redor de p_peak → refinamento p_xcorr
+      3. Se p_xcorr estiver dentro de ±2 s de p_peak, usa p_xcorr; senão, usa p_peak.
     """
+    p_peak = find_highest_peak(phone_ser, search_end)
+
     half_win = int(5 * fs)
     k_start  = max(0, kinem_peak - half_win)
     k_end    = min(len(kinem_ser), kinem_peak + half_win)
 
     k_vals = try_numeric(kinem_ser).fillna(0).values[k_start:k_end].astype(float)
-    p_vals = try_numeric(phone_ser).fillna(0).values[:search_end].astype(float)
+
+    # Limita busca xcorr a ±3 s ao redor do p_peak
+    guard = int(3 * fs)
+    p_search_start = max(0, p_peak - guard)
+    p_search_end   = min(search_end, p_peak + guard + len(k_vals))
+    p_vals = try_numeric(phone_ser).fillna(0).values[p_search_start:p_search_end].astype(float)
 
     if len(p_vals) < len(k_vals) or len(k_vals) < 4:
-        return find_highest_peak(phone_ser, search_end)
+        return p_peak
 
     ref_env   = _signal_envelope(k_vals)
     phone_env = _signal_envelope(p_vals)
 
-    corr      = np.correlate(phone_env, ref_env, mode="valid")
-    lag       = int(np.argmax(corr))
-    phone_peak = lag + (kinem_peak - k_start)
+    corr = np.correlate(phone_env, ref_env, mode="valid")
+    lag  = int(np.argmax(corr))
+    p_xcorr = p_search_start + lag + (kinem_peak - k_start)
 
-    if 0 <= phone_peak < search_end:
-        return phone_peak
-    return find_highest_peak(phone_ser, search_end)
+    # Aceita xcorr só se o resultado for próximo da estimativa por pico
+    if 0 <= p_xcorr < search_end and abs(p_xcorr - p_peak) <= int(2 * fs):
+        return p_xcorr
+    return p_peak
 
 
 def apply_lowpass(df, fs, cutoff_hz, order=4):
