@@ -648,14 +648,18 @@ if st.button("🔍 Checar qualidade dos dados", use_container_width=True):
                 st.info("Nenhum sinal classificado neste grupo.")
             else:
                 fig_qa = go.Figure()
-                for std_val, lbl, y_view in group:
+                for std_val, lbl, y_raw in group:
+                    # z-score para comparar padrões temporais entre sensores
+                    mn, sd = np.nanmean(y_raw), np.nanstd(y_raw)
+                    y_norm = (y_raw - mn) / sd if sd > 0 else y_raw - mn
                     fig_qa.add_trace(go.Scatter(
-                        x=x_view, y=y_view, mode="lines",
-                        name=f"{lbl}  (σ={std_val:.3f})",
+                        x=x_view, y=y_norm, mode="lines",
+                        name=f"{lbl}  (σ_orig={std_val:.3f})",
                     ))
                 fig_qa.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="salto")
                 fig_qa.update_layout(
                     xaxis=dict(title=x_label, range=[qa_xmin, qa_xmax]),
+                    yaxis_title="z-score",
                     height=380, template="plotly_white", hovermode="x unified",
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
                     margin=dict(t=30, b=40),
