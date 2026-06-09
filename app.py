@@ -471,7 +471,7 @@ with st.sidebar:
         )
 
 # ──────────────────────────────────────────────
-# Sidebar — 6. Processamento
+# Sidebar — 5. Processamento
 # ──────────────────────────────────────────────
 with st.sidebar:
     st.header("5 · Processamento")
@@ -694,7 +694,7 @@ if st.session_state.synced and st.session_state.raw_synced and st.session_state.
     _render_verif("Joelho", knee_kinem_col, knee_acc, knee_acc_col, "Kinem Joelho", "ACC Joelho")
 
     if not st.session_state.proc_data:
-        st.success("### ✅ Sincronização concluída!\nVerifique os gráficos acima. Se estiver OK, ajuste os filtros na **seção 6 à esquerda** e clique em **🔧 Processar** para prosseguir.")
+        st.success("### ✅ Sincronização concluída!\nVerifique os gráficos acima. Se estiver OK, ajuste os filtros na **seção 5 à esquerda** e clique em **🔧 Processar** para prosseguir.")
     st.divider()
 
 # ──────────────────────────────────────────────
