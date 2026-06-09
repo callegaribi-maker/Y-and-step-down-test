@@ -428,6 +428,13 @@ if st.session_state.show_preview:
         sync_cols.append((l5_acc, l5_acc_col))
     if knee_acc != NONE and knee_acc_col:
         sync_cols.append((knee_acc, knee_acc_col))
+
+    pc1, pc2 = st.columns(2)
+    with pc1:
+        prev_t_start = st.number_input("Ver a partir de (s)", min_value=0.0, value=0.0, step=1.0, key="prev_start")
+    with pc2:
+        prev_t_end = st.number_input("Até (s)  — 0 = fim do sinal", min_value=0.0, value=0.0, step=1.0, key="prev_end")
+
     n_prev = len(sync_cols)
     fig_p = make_subplots(rows=n_prev, cols=1, shared_xaxes=False,
                            subplot_titles=[f"{fn} · {c}" for fn, c in sync_cols],
@@ -436,7 +443,10 @@ if st.session_state.show_preview:
         t, tcol = detect_time_axis(files_data[fname])
         x = t - t[0] if t is not None else np.arange(len(files_data[fname]))
         y = try_numeric(files_data[fname][col])
-        fig_p.add_trace(go.Scatter(x=x, y=y, mode="lines", showlegend=False), row=row, col=1)
+        mask = x >= prev_t_start
+        if prev_t_end > prev_t_start:
+            mask &= x <= prev_t_end
+        fig_p.add_trace(go.Scatter(x=x[mask], y=y[mask], mode="lines", showlegend=False), row=row, col=1)
     fig_p.update_layout(height=280 * n_prev, template="plotly_white",
                          title="Colunas de sync — tempo original de cada arquivo",
                          hovermode="x unified")
