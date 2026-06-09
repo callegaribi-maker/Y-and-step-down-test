@@ -422,6 +422,8 @@ with st.sidebar:
 if st.session_state.show_preview:
     st.subheader("👁 Sinais brutos — sem pré-processamento")
     sync_cols = [(kinem_ref, l5_kinem_col)]
+    if knee_kinem_col and knee_kinem_col != l5_kinem_col:
+        sync_cols.append((kinem_ref, knee_kinem_col))
     if l5_acc != NONE and l5_acc_col:
         sync_cols.append((l5_acc, l5_acc_col))
     if knee_acc != NONE and knee_acc_col:
