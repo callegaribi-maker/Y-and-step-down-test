@@ -405,12 +405,55 @@ for i, (fname, df) in enumerate(display_data.items()):
         col_selections[fname] = sel
 
 # ──────────────────────────────────────────────
-# Plot
+# Plot — configuração
 # ──────────────────────────────────────────────
 st.divider()
-plot_mode = st.radio("Modo de plot",
-                      ["Um gráfico por coluna", "Todos no mesmo gráfico"], horizontal=True)
-x_unit = st.radio("Eixo x", ["Segundos", "Amostras"], horizontal=True)
+
+x_unit    = st.radio("Eixo x", ["Segundos", "Amostras"], horizontal=True)
+plot_mode = st.radio(
+    "Modo de plot",
+    ["Um por sinal", "Todos no mesmo gráfico", "Personalizado"],
+    horizontal=True,
+    help="'Personalizado' permite escolher quais sinais compartilham o mesmo gráfico.",
+)
+
+# Lista de todos os sinais atualmente selecionados
+all_signals = [
+    (fname, col)
+    for fname in display_data
+    for col in col_selections.get(fname, [])
+    if col in numeric_cols(display_data[fname])
+]
+
+# ── Modo Personalizado: atribuição de grupos ───────────────────
+if plot_mode == "Personalizado":
+    if "plot_groups" not in st.session_state:
+        st.session_state.plot_groups = {}
+
+    if all_signals:
+        st.markdown("**Atribua cada sinal a um gráfico** (sinais no mesmo número aparecem juntos):")
+        group_options = ["Gráfico 1", "Gráfico 2", "Gráfico 3", "Gráfico 4", "Gráfico 5"]
+
+        for idx, (fname, col) in enumerate(all_signals):
+            key = f"{fname}||{col}"
+            # Valor padrão: cada sinal em seu próprio gráfico
+            current = st.session_state.plot_groups.get(key, group_options[min(idx, 4)])
+            if current not in group_options:
+                current = group_options[0]
+            c1, c2 = st.columns([5, 2])
+            with c1:
+                short = fname[:40]
+                st.markdown(f"<small>**{short}** · {col}</small>", unsafe_allow_html=True)
+            with c2:
+                chosen = st.selectbox(
+                    "grupo", group_options,
+                    index=group_options.index(current),
+                    key=f"grp_{key}",
+                    label_visibility="collapsed",
+                )
+                st.session_state.plot_groups[key] = chosen
+    else:
+        st.info("Selecione colunas na seção acima para configurar os grupos.")
 
 if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_width=True):
 
@@ -432,6 +475,7 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
     x_axis  = x_samp / target_fs if x_unit == "Segundos" else x_samp
     x_label = ("Tempo (s)  —  0 = pico do salto" if x_unit == "Segundos"
                 else "Amostra  —  0 = pico do salto")
+    x_min, x_max = float(x_axis.min()), float(x_axis.max())
 
     traces = []
     for fname, df in aligned_data.items():
@@ -447,26 +491,51 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
         for fname, col, x, y in traces:
             fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=f"{fname} · {col}"))
         fig.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="salto")
-        fig.update_layout(title="Sinais Sincronizados", xaxis_title=x_label,
-                           height=600, hovermode="x unified", template="plotly_white",
-                           legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
+        fig.update_layout(
+            title="Sinais Sincronizados", xaxis_title=x_label,
+            height=600, hovermode="x unified", template="plotly_white",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        )
         st.plotly_chart(fig, use_container_width=True)
 
-    else:
-        # ── Um gráfico independente por sinal ──────────────────────────
-        # Todos com o mesmo intervalo de x para facilitar comparação visual.
-        # Cada um tem zoom/pan próprio. A ordem segue a seleção de colunas.
-        x_min = float(x_axis.min())
-        x_max = float(x_axis.max())
-        st.caption(f"Intervalo total: {x_min:.2f} → {x_max:.2f} {'s' if x_unit == 'Segundos' else ' amostras'}  |  reordene arrastando os gráficos na página")
+    elif plot_mode == "Personalizado":
+        # Agrupa traces pelo número de gráfico definido pelo usuário
+        from collections import defaultdict
+        groups = defaultdict(list)
+        plot_groups = st.session_state.get("plot_groups", {})
+        for fname, col, x, y in traces:
+            key  = f"{fname}||{col}"
+            grp  = plot_groups.get(key, "Gráfico 1")
+            groups[grp].append((fname, col, x, y))
 
+        for grp_name in sorted(groups.keys()):
+            grp_traces = groups[grp_name]
+            fig_g = go.Figure()
+            for fname, col, x, y in grp_traces:
+                fig_g.add_trace(go.Scatter(
+                    x=x, y=y, mode="lines", name=f"{fname} · {col}",
+                ))
+            fig_g.add_vline(x=0, line_dash="dash", line_color="gray",
+                             annotation_text="salto", annotation_position="top right")
+            fig_g.update_layout(
+                title=grp_name,
+                xaxis=dict(title=x_label, range=[x_min, x_max]),
+                height=300,
+                margin=dict(t=45, b=40, l=60, r=20),
+                hovermode="x unified",
+                template="plotly_white",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+            )
+            st.plotly_chart(fig_g, use_container_width=True)
+
+    else:  # "Um por sinal"
+        st.caption(
+            f"Intervalo: {x_min:.2f} → {x_max:.2f} "
+            f"{'s' if x_unit == 'Segundos' else 'amostras'}"
+        )
         for fname, col, x, y in traces:
             fig_i = go.Figure()
-            fig_i.add_trace(go.Scatter(
-                x=x, y=y, mode="lines",
-                line=dict(width=1.5),
-                name=f"{fname} · {col}",
-            ))
+            fig_i.add_trace(go.Scatter(x=x, y=y, mode="lines", line=dict(width=1.5)))
             fig_i.add_vline(x=0, line_dash="dash", line_color="gray",
                              annotation_text="salto", annotation_position="top right")
             fig_i.update_layout(
