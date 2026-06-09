@@ -381,11 +381,6 @@ with st.sidebar:
         min_value=1, max_value=10000, value=100, step=10,
         help="Todos os arquivos serão reamostrados para esta frequência comum.",
     )
-    janela_seg = st.number_input(
-        "Buscar pico nos primeiros X segundos",
-        min_value=0.1, max_value=300.0, value=16.0, step=0.5,
-        help="Use um valor que cubra o início onde está o salto de sync.",
-    )
 
 # ──────────────────────────────────────────────
 # Sidebar — 6. Processamento
@@ -423,11 +418,17 @@ with st.sidebar:
 # ──────────────────────────────────────────────
 # Botões: Preview + Sincronizar (lado a lado)
 # ──────────────────────────────────────────────
-btn_col1, btn_col2 = st.columns(2)
+btn_col1, btn_col2, btn_col3 = st.columns([2, 1, 2])
 with btn_col1:
     if st.button("👁 Preview sinais brutos", use_container_width=True):
         st.session_state.show_preview = not st.session_state.show_preview
 with btn_col2:
+    janela_seg = st.number_input(
+        "Pico nos primeiros (s)",
+        min_value=0.1, max_value=300.0, value=16.0, step=0.5,
+        help="Janela de busca do pico de sincronização.",
+    )
+with btn_col3:
     if st.button("🔗 Sincronizar", type="primary", use_container_width=True):
         with st.spinner("Reamostando e detectando pico…"):
             raw_synced = {}
