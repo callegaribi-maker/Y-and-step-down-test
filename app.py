@@ -133,10 +133,16 @@ with st.sidebar:
     kinem_idx = next((i for i, n in enumerate(file_names) if "kinem" in n.lower()), 0)
     kinem_ref = st.selectbox("Arquivo Kinem", file_names, index=kinem_idx)
     kinem_num = numeric_cols(files_data[kinem_ref])
+    st.caption("As duas colunas são do mesmo arquivo — o pico do salto ocorre na mesma amostra para L5 e joelho.")
     l5_kinem_col = st.selectbox(
-        "Coluna L5 vertical (aceleração)",
+        "Coluna L5 vertical (referência de sync + verificação)",
         kinem_num,
         index=col_default(kinem_num, ["l5 a(z)", "l5a(z)", "l5_az", "l5"]),
+    )
+    knee_kinem_col = st.selectbox(
+        "Coluna Joelho vertical (verificação)",
+        kinem_num,
+        index=col_default(kinem_num, ["joelho a(z)", "knee a(z)", "joelho", "knee"]),
     )
 
 # ──────────────────────────────────────────────
@@ -417,12 +423,13 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
 
     # ── Verificação Joelho ──────────────────────────────────────
     knee_check = []
+    if knee_kinem_col in aligned_data.get(kinem_ref, pd.DataFrame()).columns:
+        knee_check.append((kinem_ref, knee_kinem_col, "Kinem Joelho"))
     if knee_acc != NONE and knee_acc_col and knee_acc in aligned_data:
-        # Para o joelho, mostramos a aceleração do ACC joelho vs o que tiver de joelho no Kinem
-        knee_check.append((knee_acc, knee_acc_col, "ACC Joelho"))
-    # (usuário pode adicionar coluna de joelho do Kinem manualmente na seleção de colunas)
+        if knee_acc_col in aligned_data[knee_acc].columns:
+            knee_check.append((knee_acc, knee_acc_col, "ACC Joelho"))
 
-    if knee_check:
+    if len(knee_check) > 1:
         with st.expander("🔍 Verificação — alinhamento Joelho"):
             fig_k = go.Figure()
             for fname, col, label in knee_check:
@@ -430,7 +437,7 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
                 fig_k.add_trace(go.Scatter(x=x_axis, y=y, mode="lines", name=label))
             fig_k.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="salto")
             fig_k.update_layout(
-                title="Joelho — ACC alinhado",
+                title="Joelho — Kinem vs ACC (alinhados)",
                 xaxis_title="Amostra (0 = pico)", hovermode="x unified",
                 template="plotly_white", height=380,
             )
