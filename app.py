@@ -531,51 +531,8 @@ for i, (fname, df) in enumerate(display_data.items()):
 # ──────────────────────────────────────────────
 st.divider()
 
-x_unit    = st.radio("Eixo x", ["Segundos", "Amostras"], horizontal=True)
-plot_mode = st.radio(
-    "Modo de plot",
-    ["L5 | Joelho (lado a lado)", "Um por sinal", "Todos no mesmo gráfico", "Personalizado"],
-    horizontal=True,
-    help="'L5 | Joelho' organiza em duas colunas. 'Personalizado' permite agrupar livremente.",
-)
-
-# Lista de todos os sinais atualmente selecionados
-all_signals = [
-    (fname, col)
-    for fname in display_data
-    for col in col_selections.get(fname, [])
-    if col in numeric_cols(display_data[fname])
-]
-
-# ── Modo Personalizado: atribuição de grupos ───────────────────
-if plot_mode == "Personalizado":
-    if "plot_groups" not in st.session_state:
-        st.session_state.plot_groups = {}
-
-    if all_signals:
-        st.markdown("**Atribua cada sinal a um gráfico** (sinais no mesmo número aparecem juntos):")
-        group_options = ["Gráfico 1", "Gráfico 2", "Gráfico 3", "Gráfico 4", "Gráfico 5"]
-
-        for idx, (fname, col) in enumerate(all_signals):
-            key = f"{fname}||{col}"
-            # Valor padrão: cada sinal em seu próprio gráfico
-            current = st.session_state.plot_groups.get(key, group_options[min(idx, 4)])
-            if current not in group_options:
-                current = group_options[0]
-            c1, c2 = st.columns([5, 2])
-            with c1:
-                short = fname[:40]
-                st.markdown(f"<small>**{short}** · {col}</small>", unsafe_allow_html=True)
-            with c2:
-                chosen = st.selectbox(
-                    "grupo", group_options,
-                    index=group_options.index(current),
-                    key=f"grp_{key}",
-                    label_visibility="collapsed",
-                )
-                st.session_state.plot_groups[key] = chosen
-    else:
-        st.info("Selecione colunas na seção acima para configurar os grupos.")
+x_unit    = "Segundos"
+plot_mode = "L5 | Joelho (lado a lado)"
 
 vc1, vc2 = st.columns(2)
 with vc1:
@@ -746,37 +703,28 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
 
     if not traces:
         st.warning("Nenhuma coluna selecionada.")
-
-    elif plot_mode == "L5 | Joelho (lado a lado)":
-        # Classifica cada trace em L5, Joelho ou Outros
+    else:
+        # L5 | Joelho lado a lado
         l5_traces, knee_traces, other_traces = [], [], []
         for t in traces:
-            fn, cl = t[0], t[1]
-            cat = classify_trace(fn, cl, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
-            if cat == "l5":
-                l5_traces.append(t)
-            elif cat == "joelho":
-                knee_traces.append(t)
-            else:
-                other_traces.append(t)
+            cat = classify_trace(t[0], t[1], kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
+            if cat == "l5":      l5_traces.append(t)
+            elif cat == "joelho": knee_traces.append(t)
+            else:                 other_traces.append(t)
 
         def render_col_charts(trace_list):
             for fname, col, x, y in trace_list:
                 dcol = display_col_name(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
                 fig_i = go.Figure()
-                fig_i.add_trace(go.Scatter(
-                    x=x, y=y, mode="lines", line=dict(width=1.5), showlegend=False,
-                ))
+                fig_i.add_trace(go.Scatter(x=x, y=y, mode="lines", line=dict(width=1.5), showlegend=False))
                 fig_i.add_vline(x=0, line_dash="dash", line_color="gray",
-                                 annotation_text="salto", annotation_position="top right")
+                                annotation_text="salto", annotation_position="top right")
                 fig_i.update_layout(
                     title=dict(text=f"<b>{fname[:28]}</b> · {dcol}", font_size=12),
                     xaxis=dict(title=x_label, range=[x_min, x_max]),
-                    yaxis_title="",
-                    height=230,
+                    yaxis_title="", height=230,
                     margin=dict(t=42, b=38, l=55, r=10),
-                    hovermode="x",
-                    template="plotly_white",
+                    hovermode="x", template="plotly_white",
                 )
                 st.plotly_chart(fig_i, use_container_width=True)
 
@@ -790,69 +738,6 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
         if other_traces:
             st.markdown("#### Outros sinais")
             render_col_charts(other_traces)
-
-    elif plot_mode == "Todos no mesmo gráfico":
-        fig = go.Figure()
-        for fname, col, x, y in traces:
-            dcol = display_col_name(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
-            fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=f"{fname} · {dcol}"))
-        fig.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="salto")
-        fig.update_layout(
-            title="Sinais Sincronizados", xaxis_title=x_label,
-            height=600, hovermode="x unified", template="plotly_white",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    elif plot_mode == "Personalizado":
-        from collections import defaultdict
-        groups = defaultdict(list)
-        plot_groups = st.session_state.get("plot_groups", {})
-        for fname, col, x, y in traces:
-            key  = f"{fname}||{col}"
-            grp  = plot_groups.get(key, "Gráfico 1")
-            dcol = display_col_name(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
-            groups[grp].append((fname, col, dcol, x, y))
-
-        for grp_name in sorted(groups.keys()):
-            fig_g = go.Figure()
-            for fname, col, dcol, x, y in groups[grp_name]:
-                fig_g.add_trace(go.Scatter(x=x, y=y, mode="lines", name=f"{fname} · {dcol}"))
-            fig_g.add_vline(x=0, line_dash="dash", line_color="gray",
-                             annotation_text="salto", annotation_position="top right")
-            fig_g.update_layout(
-                title=grp_name,
-                xaxis=dict(title=x_label, range=[x_min, x_max]),
-                height=300,
-                margin=dict(t=45, b=40, l=60, r=20),
-                hovermode="x unified",
-                template="plotly_white",
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-            )
-            st.plotly_chart(fig_g, use_container_width=True)
-
-    else:  # "Um por sinal"
-        st.caption(
-            f"Intervalo: {x_min:.2f} → {x_max:.2f} "
-            f"{'s' if x_unit == 'Segundos' else 'amostras'}"
-        )
-        for fname, col, x, y in traces:
-            dcol = display_col_name(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
-            fig_i = go.Figure()
-            fig_i.add_trace(go.Scatter(x=x, y=y, mode="lines", line=dict(width=1.5)))
-            fig_i.add_vline(x=0, line_dash="dash", line_color="gray",
-                             annotation_text="salto", annotation_position="top right")
-            fig_i.update_layout(
-                title=dict(text=f"<b>{fname}</b>  ·  {dcol}", font_size=13),
-                xaxis=dict(title=x_label, range=[x_min, x_max]),
-                yaxis_title="Valor",
-                height=220,
-                margin=dict(t=40, b=40, l=60, r=20),
-                hovermode="x",
-                template="plotly_white",
-                showlegend=False,
-            )
-            st.plotly_chart(fig_i, use_container_width=True)
 
     # ── Verificação L5 ──────────────────────────────────────────
     l5_check = []
