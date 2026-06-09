@@ -88,11 +88,14 @@ def axis_label(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr):
     if axis is None:
         return ""
 
-    is_phone = fname in (l5_acc, l5_gyr, knee_acc, knee_gyr)
-    is_kinem = fname == kinem_ref
+    is_l5_phone   = fname in (l5_acc, l5_gyr)
+    is_knee_phone = fname in (knee_acc, knee_gyr)
+    is_kinem      = fname == kinem_ref
 
-    if is_phone:
+    if is_l5_phone:
         mapping = {"x": "ML", "y": "Vertical", "z": "AP"}
+    elif is_knee_phone:
+        mapping = {"x": "AP", "y": "Vertical", "z": "ML"}
     elif is_kinem:
         mapping = {"x": "ML", "y": "AP", "z": "Vertical"}
     else:
