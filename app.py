@@ -281,6 +281,7 @@ with st.sidebar:
     janela_seg = st.number_input(
         "Buscar pico nos primeiros X segundos",
         min_value=0.1, max_value=300.0, value=5.0, step=0.5,
+        help="Use um valor pequeno que cubra só o início onde está o salto de sync.",
     )
 
     if st.button("⚙️ Pré-processar e Sincronizar", type="primary", use_container_width=True):
@@ -452,19 +453,33 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
         st.plotly_chart(fig, use_container_width=True)
 
     else:
-        n = len(traces)
-        fig = make_subplots(rows=n, cols=1, shared_xaxes=True,
-                             subplot_titles=[f"{fn} · {c}" for fn, c, *_ in traces],
-                             vertical_spacing=0.03)
-        for row, (fname, col, x, y) in enumerate(traces, start=1):
-            fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=f"{fname} · {col}"),
-                          row=row, col=1)
-        for row in range(1, n + 1):
-            fig.add_vline(x=0, line_dash="dash", line_color="gray", row=row, col=1)
-        fig.update_layout(height=220 * n, hovermode="x unified",
-                           template="plotly_white", title="Sinais Sincronizados")
-        fig.update_xaxes(title_text=x_label, row=n, col=1)
-        st.plotly_chart(fig, use_container_width=True)
+        # ── Um gráfico independente por sinal ──────────────────────────
+        # Todos com o mesmo intervalo de x para facilitar comparação visual.
+        # Cada um tem zoom/pan próprio. A ordem segue a seleção de colunas.
+        x_min = float(x_axis.min())
+        x_max = float(x_axis.max())
+        st.caption(f"Intervalo total: {x_min:.2f} → {x_max:.2f} {'s' if x_unit == 'Segundos' else ' amostras'}  |  reordene arrastando os gráficos na página")
+
+        for fname, col, x, y in traces:
+            fig_i = go.Figure()
+            fig_i.add_trace(go.Scatter(
+                x=x, y=y, mode="lines",
+                line=dict(width=1.5),
+                name=f"{fname} · {col}",
+            ))
+            fig_i.add_vline(x=0, line_dash="dash", line_color="gray",
+                             annotation_text="salto", annotation_position="top right")
+            fig_i.update_layout(
+                title=dict(text=f"<b>{fname}</b>  ·  {col}", font_size=13),
+                xaxis=dict(title=x_label, range=[x_min, x_max]),
+                yaxis_title="Valor",
+                height=220,
+                margin=dict(t=40, b=40, l=60, r=20),
+                hovermode="x",
+                template="plotly_white",
+                showlegend=False,
+            )
+            st.plotly_chart(fig_i, use_container_width=True)
 
     # ── Verificação L5 ──────────────────────────────────────────
     l5_check = []
