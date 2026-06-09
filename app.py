@@ -449,30 +449,38 @@ with btn_col3:
             offsets     = {kinem_ref: 0}
             msgs_sync   = []
 
-            s_k    = try_numeric(raw_synced[kinem_ref][l5_kinem_col]).abs()
-            peak_k = int(s_k.iloc[:janela_samp].idxmax())
+            # Pico do Kinem L5 — referência global (x=0)
+            s_k_l5   = try_numeric(raw_synced[kinem_ref][l5_kinem_col]).abs()
+            peak_k   = int(s_k_l5.iloc[:janela_samp].idxmax())
             st.session_state.peak_ref     = peak_k
             st.session_state.synced       = True
-            st.session_state.show_preview = False   # fecha preview ao sincronizar
-            msgs_sync.append(f"**Kinem** — pico @ {peak_k} ({peak_k/fs_target:.2f} s)")
+            st.session_state.show_preview = False
+            msgs_sync.append(f"**Kinem L5** — pico @ {peak_k} ({peak_k/fs_target:.2f} s) → referência x=0")
 
+            # Pico do Kinem Joelho (Côndilo) — referência para sync do celular joelho
+            s_k_knee  = try_numeric(raw_synced[kinem_ref][knee_kinem_col]).abs()
+            peak_knee = int(s_k_knee.iloc[:janela_samp].idxmax())
+            msgs_sync.append(f"**Kinem Joelho** — pico @ {peak_knee} ({peak_knee/fs_target:.2f} s)")
+
+            # L5 ACC sincroniza com pico do Kinem L5
             if l5_acc != NONE and l5_acc_col and l5_acc_col in raw_synced.get(l5_acc, pd.DataFrame()).columns:
                 s = try_numeric(raw_synced[l5_acc][l5_acc_col]).abs()
                 p = int(s.iloc[:janela_samp].idxmax())
                 offsets[l5_acc] = peak_k - p
-                msgs_sync.append(f"**L5 ACC** — pico @ {p} ({p/fs_target:.2f} s) → offset {peak_k-p:+d}")
+                msgs_sync.append(f"**L5 ACC** — pico @ {p} ({p/fs_target:.2f} s) → offset {peak_k-p:+d} (ref: L5)")
                 if l5_gyr != NONE:
                     offsets[l5_gyr] = peak_k - p
                     msgs_sync.append(f"**L5 GYR** — offset {peak_k-p:+d} (= ACC)")
 
+            # Joelho ACC sincroniza com pico do Kinem Joelho (Côndilo)
             if knee_acc != NONE and knee_acc_col and knee_acc_col in raw_synced.get(knee_acc, pd.DataFrame()).columns:
                 s = try_numeric(raw_synced[knee_acc][knee_acc_col]).abs()
                 p = int(s.iloc[:janela_samp].idxmax())
-                offsets[knee_acc] = peak_k - p
-                msgs_sync.append(f"**Joelho ACC** — pico @ {p} ({p/fs_target:.2f} s) → offset {peak_k-p:+d}")
+                offsets[knee_acc] = peak_knee - p
+                msgs_sync.append(f"**Joelho ACC** — pico @ {p} ({p/fs_target:.2f} s) → offset {peak_knee-p:+d} (ref: Côndilo)")
                 if knee_gyr != NONE:
-                    offsets[knee_gyr] = peak_k - p
-                    msgs_sync.append(f"**Joelho GYR** — offset {peak_k-p:+d} (= ACC)")
+                    offsets[knee_gyr] = peak_knee - p
+                    msgs_sync.append(f"**Joelho GYR** — offset {peak_knee-p:+d} (= ACC Joelho)")
 
             for fname in file_names:
                 if fname not in offsets:
