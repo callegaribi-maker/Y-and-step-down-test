@@ -562,9 +562,10 @@ with st.expander("⚙️ Colunas para check de qualidade (1 por fonte)"):
         qa_kinem_knee_col = st.selectbox(
             "🔵 Kinem — Joelho", kinem_num, key="qa_kknee",
             index=col_default(kinem_num, [
+                "condilo lateral esq. a(z)", "condilo a(z)", "condilo a(z)",
                 "condilo d(z)", "condilo d(y)", "condilo p(z)", "condilo p(y)",
-                "condilo v(z)", "condilo a(z)", "condilo",
-                "joelho d", "joelho p", "joelho a(z)",
+                "condilo v(z)", "condilo",
+                "joelho a(z)", "joelho d", "joelho p",
             ]),
         )
 
