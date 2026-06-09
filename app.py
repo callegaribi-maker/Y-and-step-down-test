@@ -139,10 +139,12 @@ def apply_lowpass(df, fs, cutoff_hz, order=4):
     nyq = fs / 2.0
     if cutoff_hz >= nyq:
         return result
-    b, a = sp_signal.butter(order, cutoff_hz / nyq, btype="low")
+    # sosfiltfilt é numericamente estável mesmo para cutoff muito baixo
+    sos = sp_signal.butter(order, cutoff_hz / nyq, btype="low", output="sos")
     for col in numeric_cols(df):
         y = df[col].fillna(0).values
-        result[col] = sp_signal.filtfilt(b, a, y)
+        filtered = sp_signal.sosfiltfilt(sos, y)
+        result[col] = filtered
     return result
 
 
