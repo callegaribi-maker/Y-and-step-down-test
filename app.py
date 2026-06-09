@@ -185,18 +185,21 @@ def apply_detrend(df):
 def find_highest_peak(series, search_end):
     """
     Retorna o índice do pico de maior amplitude dentro das primeiras
-    search_end amostras. Aplica detrend temporário (só para detecção)
-    para eliminar DC offset/drift que confunde o abs().
+    search_end amostras.
+    Remove baseline local com mediana rolante (janela 2 s = 200 amostras)
+    antes de detectar — ideal para ACC de celular com drift não-linear.
     """
     raw = series.fillna(0).values[:search_end].astype(float)
     if len(raw) == 0:
         return 0
-    # Detrend apenas para detecção — não altera dados originais
-    vals = np.abs(sp_signal.detrend(raw))
+    # Remoção de baseline local: mediana rolante centrada, janela de 2 s
+    win = min(201, max(3, (len(raw) // 4) | 1))   # ímpar, máx 201
+    baseline = pd.Series(raw).rolling(win, center=True, min_periods=1).median().values
+    vals = np.abs(raw - baseline)
     max_val = vals.max()
     if max_val == 0:
         return int(np.argmax(vals))
-    # Pico real: proeminência ≥ 30% do máximo (evita ruído e pré-picos)
+    # Pico real: proeminência ≥ 30% do máximo
     peaks, _ = sp_signal.find_peaks(vals, prominence=max_val * 0.30)
     if len(peaks) == 0:
         return int(np.argmax(vals))
