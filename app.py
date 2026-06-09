@@ -266,15 +266,16 @@ with st.sidebar:
     kinem_ref = st.selectbox("Arquivo Kinem", file_names, index=kinem_idx)
     kinem_num = numeric_cols(files_data[kinem_ref])
     st.caption("As duas colunas são do mesmo arquivo — pico ocorre na mesma amostra.")
+    st.caption("⚠️ No Kinem: Vertical = Z, AP = Y, ML = X. Selecione a coluna Z do L5 para sync.")
     l5_kinem_col = st.selectbox(
         "Coluna L5 vertical (referência sync)",
         kinem_num,
-        index=col_default(kinem_num, ["l5 a(z)", "l5a(z)", "l5_az", "l5"]),
+        index=col_default(kinem_num, ["l 5 a(z)", "l5 a(z)", "l5a(z)", "l 5 z", "l5_az", "l5"]),
     )
     knee_kinem_col = st.selectbox(
         "Coluna Joelho vertical (verificação)",
         kinem_num,
-        index=col_default(kinem_num, ["joelho a(z)", "knee a(z)", "joelho", "knee"]),
+        index=col_default(kinem_num, ["condilo", "côndilo", "joelho a(z)", "knee a(z)", "joelho", "knee"]),
     )
 
 # ──────────────────────────────────────────────
