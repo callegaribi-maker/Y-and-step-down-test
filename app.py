@@ -182,19 +182,27 @@ def apply_detrend(df):
     return result
 
 
-def _signal_envelope(v):
-    """Envelope (abs) após remoção de baseline local com mediana rolante."""
-    win = min(201, max(3, (len(v) // 4) | 1))
-    bl  = pd.Series(v).rolling(win, center=True, min_periods=1).median().values
-    return np.abs(v - bl)
+def _impact_envelope(v, fs=100.0):
+    """
+    Envelope para detecção de pico de impacto.
+    Highpass 1 Hz: remove DC/drift lento, preserva pico agudo do impacto.
+    Funciona independente de orientação de eixo.
+    """
+    v = np.asarray(v, dtype=float)
+    if len(v) < 12:
+        return np.abs(v - np.mean(v))
+    nyq    = fs / 2.0
+    cutoff = min(1.0, nyq * 0.95)
+    sos    = sp_signal.butter(2, cutoff / nyq, btype="high", output="sos")
+    return np.abs(sp_signal.sosfiltfilt(sos, v))
 
 
-def find_highest_peak(series, search_end):
-    """Pico de maior amplitude após remoção de baseline. Fallback para xcorr."""
-    raw = series.fillna(0).values[:search_end].astype(float)
+def find_highest_peak(series, search_end, fs=100.0):
+    """Pico de maior amplitude no envelope highpass dos primeiros search_end samples."""
+    raw = try_numeric(series).fillna(0).values[:search_end].astype(float)
     if len(raw) == 0:
         return 0
-    vals    = _signal_envelope(raw)
+    vals    = _impact_envelope(raw, fs)
     max_val = vals.max()
     if max_val == 0:
         return int(np.argmax(vals))
@@ -207,39 +215,34 @@ def find_highest_peak(series, search_end):
 def find_sync_xcorr(kinem_ser, phone_ser, kinem_peak, search_end, fs):
     """
     Encontra a amostra de phone_ser que corresponde a kinem_peak.
-    Estratégia:
-      1. find_highest_peak → estimativa grosseira p_peak
-      2. xcorr de envelopes numa janela ±3 s ao redor de p_peak → refinamento p_xcorr
-      3. Se p_xcorr estiver dentro de ±2 s de p_peak, usa p_xcorr; senão, usa p_peak.
+    Usa xcorr de envelopes highpass num template ±2 s ao redor de kinem_peak.
+    A busca no phone cobre TODOS os search_end samples para não depender
+    da estimativa de pico. Fallback: find_highest_peak.
     """
-    p_peak = find_highest_peak(phone_ser, search_end)
+    # Template Kinem: ±2 s ao redor do peak de referência
+    half_tpl = int(2 * fs)
+    k_start  = max(0, kinem_peak - half_tpl)
+    k_end    = min(len(kinem_ser), kinem_peak + half_tpl)
+    k_vals   = try_numeric(kinem_ser).fillna(0).values[k_start:k_end].astype(float)
 
-    half_win = int(5 * fs)
-    k_start  = max(0, kinem_peak - half_win)
-    k_end    = min(len(kinem_ser), kinem_peak + half_win)
+    p_vals = try_numeric(phone_ser).fillna(0).values[:search_end].astype(float)
 
-    k_vals = try_numeric(kinem_ser).fillna(0).values[k_start:k_end].astype(float)
+    # Precisa phone >= template para mode='valid' funcionar corretamente
+    if len(p_vals) < len(k_vals) + 1 or len(k_vals) < 4:
+        return find_highest_peak(phone_ser, search_end, fs)
 
-    # Limita busca xcorr a ±3 s ao redor do p_peak
-    guard = int(3 * fs)
-    p_search_start = max(0, p_peak - guard)
-    p_search_end   = min(search_end, p_peak + guard + len(k_vals))
-    p_vals = try_numeric(phone_ser).fillna(0).values[p_search_start:p_search_end].astype(float)
+    ref_env   = _impact_envelope(k_vals,  fs)
+    phone_env = _impact_envelope(p_vals,  fs)
 
-    if len(p_vals) < len(k_vals) or len(k_vals) < 4:
-        return p_peak
+    # mode='valid': len(phone_env) >= len(ref_env) garantido acima
+    corr    = np.correlate(phone_env, ref_env, mode="valid")
+    lag     = int(np.argmax(corr))
+    # lag=0 → phone[0:len(ref)] alinha com ref → peak do template (kinem_peak-k_start) fica no índice (lag + kinem_peak - k_start)
+    p_xcorr = lag + (kinem_peak - k_start)
 
-    ref_env   = _signal_envelope(k_vals)
-    phone_env = _signal_envelope(p_vals)
-
-    corr = np.correlate(phone_env, ref_env, mode="valid")
-    lag  = int(np.argmax(corr))
-    p_xcorr = p_search_start + lag + (kinem_peak - k_start)
-
-    # Aceita xcorr só se o resultado for próximo da estimativa por pico
-    if 0 <= p_xcorr < search_end and abs(p_xcorr - p_peak) <= int(2 * fs):
+    if 0 <= p_xcorr < search_end:
         return p_xcorr
-    return p_peak
+    return find_highest_peak(phone_ser, search_end, fs)
 
 
 def apply_lowpass(df, fs, cutoff_hz, order=4):
@@ -511,7 +514,7 @@ with btn_col3:
 
             # ── Referência L5: pico do Kinem L5 a(Z) → define x=0 global ──
             s_k_l5 = try_numeric(raw_synced[kinem_ref][l5_kinem_col])
-            peak_k = find_highest_peak(s_k_l5, janela_samp)
+            peak_k = find_highest_peak(s_k_l5, janela_samp, fs_target)
             st.session_state.peak_ref     = peak_k
             st.session_state.synced       = True
             st.session_state.show_preview = False
@@ -523,7 +526,7 @@ with btn_col3:
             s_k_knee  = try_numeric(raw_synced[kinem_ref][knee_kinem_col])
             k_start   = max(0, peak_k - win)
             k_end     = min(len(s_k_knee), peak_k + win)
-            peak_knee = find_highest_peak(s_k_knee.iloc[k_start:k_end].reset_index(drop=True), k_end - k_start) + k_start
+            peak_knee = find_highest_peak(s_k_knee.iloc[k_start:k_end].reset_index(drop=True), k_end - k_start, fs_target) + k_start
             msgs_sync.append(f"**Kinem Joelho (Côndilo)** — pico @ {peak_knee} ({peak_knee/fs_target:.2f} s) → Δ {(peak_knee-peak_k)/fs_target:+.3f} s")
 
             # ── L5 ACC sincroniza com pico do Kinem L5 (xcorr) ──
