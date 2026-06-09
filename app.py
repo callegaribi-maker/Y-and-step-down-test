@@ -468,7 +468,44 @@ with st.sidebar:
                 st.write(m)
 
 # ──────────────────────────────────────────────
-# Verificação de alinhamento (logo após sync)
+# Preview bruto
+# ──────────────────────────────────────────────
+if st.session_state.show_preview:
+    st.subheader("👁 Sinais brutos — sem pré-processamento")
+    sync_cols = [(kinem_ref, l5_kinem_col)]
+    if knee_kinem_col and knee_kinem_col != l5_kinem_col:
+        sync_cols.append((kinem_ref, knee_kinem_col))
+    if l5_acc != NONE and l5_acc_col:
+        sync_cols.append((l5_acc, l5_acc_col))
+    if knee_acc != NONE and knee_acc_col:
+        sync_cols.append((knee_acc, knee_acc_col))
+
+    pc1, pc2 = st.columns(2)
+    with pc1:
+        prev_t_start = st.number_input("Ver a partir de (s)", min_value=0.0, value=0.0, step=1.0, key="prev_start")
+    with pc2:
+        prev_t_end = st.number_input("Até (s)  — 0 = fim do sinal", min_value=0.0, value=0.0, step=1.0, key="prev_end")
+
+    n_prev = len(sync_cols)
+    fig_p = make_subplots(rows=n_prev, cols=1, shared_xaxes=False,
+                           subplot_titles=[f"{fn} · {c}" for fn, c in sync_cols],
+                           vertical_spacing=0.08)
+    for row, (fname, col) in enumerate(sync_cols, start=1):
+        t, tcol = detect_time_axis(files_data[fname])
+        x = t - t[0] if t is not None else np.arange(len(files_data[fname]))
+        y = try_numeric(files_data[fname][col])
+        mask = x >= prev_t_start
+        if prev_t_end > prev_t_start:
+            mask &= x <= prev_t_end
+        fig_p.add_trace(go.Scatter(x=x[mask], y=y[mask], mode="lines", showlegend=False), row=row, col=1)
+    fig_p.update_layout(height=280 * n_prev, template="plotly_white",
+                         title="Colunas de sync — tempo original de cada arquivo",
+                         hovermode="x unified")
+    st.plotly_chart(fig_p, use_container_width=True)
+    st.divider()
+
+# ──────────────────────────────────────────────
+# Verificação de alinhamento (abaixo do preview bruto)
 # ──────────────────────────────────────────────
 if st.session_state.proc_data and st.session_state.offsets and st.session_state.peak_ref is not None:
     _vfs = st.session_state.target_fs or 100
@@ -529,43 +566,6 @@ if st.session_state.proc_data and st.session_state.offsets and st.session_state.
 
     _render_verif("L5",     l5_kinem_col,   l5_acc,   l5_acc_col,   "Kinem L5",     "ACC L5")
     _render_verif("Joelho", knee_kinem_col, knee_acc, knee_acc_col, "Kinem Joelho", "ACC Joelho")
-    st.divider()
-
-# ──────────────────────────────────────────────
-# Preview bruto
-# ──────────────────────────────────────────────
-if st.session_state.show_preview:
-    st.subheader("👁 Sinais brutos — sem pré-processamento")
-    sync_cols = [(kinem_ref, l5_kinem_col)]
-    if knee_kinem_col and knee_kinem_col != l5_kinem_col:
-        sync_cols.append((kinem_ref, knee_kinem_col))
-    if l5_acc != NONE and l5_acc_col:
-        sync_cols.append((l5_acc, l5_acc_col))
-    if knee_acc != NONE and knee_acc_col:
-        sync_cols.append((knee_acc, knee_acc_col))
-
-    pc1, pc2 = st.columns(2)
-    with pc1:
-        prev_t_start = st.number_input("Ver a partir de (s)", min_value=0.0, value=0.0, step=1.0, key="prev_start")
-    with pc2:
-        prev_t_end = st.number_input("Até (s)  — 0 = fim do sinal", min_value=0.0, value=0.0, step=1.0, key="prev_end")
-
-    n_prev = len(sync_cols)
-    fig_p = make_subplots(rows=n_prev, cols=1, shared_xaxes=False,
-                           subplot_titles=[f"{fn} · {c}" for fn, c in sync_cols],
-                           vertical_spacing=0.08)
-    for row, (fname, col) in enumerate(sync_cols, start=1):
-        t, tcol = detect_time_axis(files_data[fname])
-        x = t - t[0] if t is not None else np.arange(len(files_data[fname]))
-        y = try_numeric(files_data[fname][col])
-        mask = x >= prev_t_start
-        if prev_t_end > prev_t_start:
-            mask &= x <= prev_t_end
-        fig_p.add_trace(go.Scatter(x=x[mask], y=y[mask], mode="lines", showlegend=False), row=row, col=1)
-    fig_p.update_layout(height=280 * n_prev, template="plotly_white",
-                         title="Colunas de sync — tempo original de cada arquivo",
-                         hovermode="x unified")
-    st.plotly_chart(fig_p, use_container_width=True)
     st.divider()
 
 # ──────────────────────────────────────────────
