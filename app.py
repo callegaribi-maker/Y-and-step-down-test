@@ -65,6 +65,48 @@ def norm(s):
     )
 
 
+def axis_label(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr):
+    """
+    Retorna o rótulo anatômico do eixo (ex: 'Vertical', 'ML', 'AP').
+    Celular: X=Mediolateral, Y=Vertical, Z=Anteroposterior
+    Kinem:   X=Mediolateral, Y=Anteroposterior, Z=Vertical
+    """
+    cn = norm(col)
+
+    # Detecta o eixo: procura (x)/(y)/(z) ou termina com x/y/z
+    axis = None
+    for ax in ["x", "y", "z"]:
+        if f"({ax})" in cn:
+            axis = ax
+            break
+    if axis is None:
+        for ax in ["z", "y", "x"]:          # z primeiro para não pegar "kx"
+            if cn.rstrip().endswith(ax):
+                axis = ax
+                break
+
+    if axis is None:
+        return ""
+
+    is_phone = fname in (l5_acc, l5_gyr, knee_acc, knee_gyr)
+    is_kinem = fname == kinem_ref
+
+    if is_phone:
+        mapping = {"x": "ML", "y": "Vertical", "z": "AP"}
+    elif is_kinem:
+        mapping = {"x": "ML", "y": "AP", "z": "Vertical"}
+    else:
+        return ""
+
+    return mapping.get(axis, "")
+
+
+def display_col_name(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr):
+    """Nome original + rótulo anatômico entre parênteses."""
+    lbl = axis_label(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
+    return f"{col}  ({lbl})" if lbl else col
+
+
 def classify_trace(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr):
     """Retorna 'l5', 'joelho' ou 'outro'."""
     if fname in (l5_acc, l5_gyr):
@@ -527,6 +569,7 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
 
         def render_col_charts(trace_list):
             for fname, col, x, y in trace_list:
+                dcol = display_col_name(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
                 fig_i = go.Figure()
                 fig_i.add_trace(go.Scatter(
                     x=x, y=y, mode="lines", line=dict(width=1.5), showlegend=False,
@@ -534,7 +577,7 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
                 fig_i.add_vline(x=0, line_dash="dash", line_color="gray",
                                  annotation_text="salto", annotation_position="top right")
                 fig_i.update_layout(
-                    title=dict(text=f"<b>{fname[:28]}</b> · {col}", font_size=12),
+                    title=dict(text=f"<b>{fname[:28]}</b> · {dcol}", font_size=12),
                     xaxis=dict(title=x_label, range=[x_min, x_max]),
                     yaxis_title="",
                     height=230,
@@ -558,7 +601,8 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
     elif plot_mode == "Todos no mesmo gráfico":
         fig = go.Figure()
         for fname, col, x, y in traces:
-            fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=f"{fname} · {col}"))
+            dcol = display_col_name(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
+            fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=f"{fname} · {dcol}"))
         fig.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="salto")
         fig.update_layout(
             title="Sinais Sincronizados", xaxis_title=x_label,
@@ -568,22 +612,19 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
         st.plotly_chart(fig, use_container_width=True)
 
     elif plot_mode == "Personalizado":
-        # Agrupa traces pelo número de gráfico definido pelo usuário
         from collections import defaultdict
         groups = defaultdict(list)
         plot_groups = st.session_state.get("plot_groups", {})
         for fname, col, x, y in traces:
             key  = f"{fname}||{col}"
             grp  = plot_groups.get(key, "Gráfico 1")
-            groups[grp].append((fname, col, x, y))
+            dcol = display_col_name(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
+            groups[grp].append((fname, col, dcol, x, y))
 
         for grp_name in sorted(groups.keys()):
-            grp_traces = groups[grp_name]
             fig_g = go.Figure()
-            for fname, col, x, y in grp_traces:
-                fig_g.add_trace(go.Scatter(
-                    x=x, y=y, mode="lines", name=f"{fname} · {col}",
-                ))
+            for fname, col, dcol, x, y in groups[grp_name]:
+                fig_g.add_trace(go.Scatter(x=x, y=y, mode="lines", name=f"{fname} · {dcol}"))
             fig_g.add_vline(x=0, line_dash="dash", line_color="gray",
                              annotation_text="salto", annotation_position="top right")
             fig_g.update_layout(
@@ -603,12 +644,13 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
             f"{'s' if x_unit == 'Segundos' else 'amostras'}"
         )
         for fname, col, x, y in traces:
+            dcol = display_col_name(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
             fig_i = go.Figure()
             fig_i.add_trace(go.Scatter(x=x, y=y, mode="lines", line=dict(width=1.5)))
             fig_i.add_vline(x=0, line_dash="dash", line_color="gray",
                              annotation_text="salto", annotation_position="top right")
             fig_i.update_layout(
-                title=dict(text=f"<b>{fname}</b>  ·  {col}", font_size=13),
+                title=dict(text=f"<b>{fname}</b>  ·  {dcol}", font_size=13),
                 xaxis=dict(title=x_label, range=[x_min, x_max]),
                 yaxis_title="Valor",
                 height=220,
