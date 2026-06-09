@@ -671,14 +671,38 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
 
     if len(l5_check) > 1:
         with st.expander("🔍 Verificação — alinhamento L5"):
-            fig_v = go.Figure()
+            st.caption(
+                f"🔵 Kinem: `{kinem_ref}` · `{l5_kinem_col}`  |  "
+                f"🔴 ACC L5: `{l5_acc}` · `{l5_acc_col}`"
+            )
+            series_v = []
             for fname, col, label in l5_check:
-                fig_v.add_trace(go.Scatter(x=x_axis, y=try_numeric(aligned_data[fname][col]),
-                                            mode="lines", name=label))
+                s = try_numeric(aligned_data[fname][col]).values.astype(float)
+                std = s.std()
+                s_norm = (s - s.mean()) / std if std > 0 else s - s.mean()
+                series_v.append((s_norm, label))
+            fig_v = go.Figure()
+            colors = ["blue", "red"]
+            for i, (s_norm, label) in enumerate(series_v):
+                fig_v.add_trace(go.Scatter(
+                    x=x_axis, y=s_norm, mode="lines",
+                    line=dict(color=colors[i], width=1.5),
+                    name=label,
+                ))
+            if len(series_v) == 2:
+                diff = series_v[0][0] - series_v[1][0]
+                fig_v.add_trace(go.Scatter(
+                    x=x_axis, y=diff, mode="lines",
+                    line=dict(color="gray", width=1, dash="dot"),
+                    name="Diferença (Kinem − ACC)",
+                ))
             fig_v.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="salto")
-            fig_v.update_layout(title="L5 — Kinem vs ACC (mesma fs)",
-                                  xaxis_title=x_label, hovermode="x unified",
-                                  template="plotly_white", height=380)
+            fig_v.update_layout(
+                title="L5 — Kinem vs ACC (normalizado por z-score · diferença em cinza)",
+                xaxis_title=x_label, hovermode="x unified",
+                template="plotly_white", height=400,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+            )
             st.plotly_chart(fig_v, use_container_width=True)
 
     # ── Verificação Joelho ──────────────────────────────────────
@@ -691,12 +715,35 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
 
     if len(knee_check) > 1:
         with st.expander("🔍 Verificação — alinhamento Joelho"):
-            fig_k = go.Figure()
+            st.caption(
+                f"🔵 Kinem: `{kinem_ref}` · `{knee_kinem_col}`  |  "
+                f"🔴 ACC Joelho: `{knee_acc}` · `{knee_acc_col}`"
+            )
+            series_k = []
             for fname, col, label in knee_check:
-                fig_k.add_trace(go.Scatter(x=x_axis, y=try_numeric(aligned_data[fname][col]),
-                                            mode="lines", name=label))
+                s = try_numeric(aligned_data[fname][col]).values.astype(float)
+                std = s.std()
+                s_norm = (s - s.mean()) / std if std > 0 else s - s.mean()
+                series_k.append((s_norm, label))
+            fig_k = go.Figure()
+            for i, (s_norm, label) in enumerate(series_k):
+                fig_k.add_trace(go.Scatter(
+                    x=x_axis, y=s_norm, mode="lines",
+                    line=dict(color=colors[i], width=1.5),
+                    name=label,
+                ))
+            if len(series_k) == 2:
+                diff = series_k[0][0] - series_k[1][0]
+                fig_k.add_trace(go.Scatter(
+                    x=x_axis, y=diff, mode="lines",
+                    line=dict(color="gray", width=1, dash="dot"),
+                    name="Diferença (Kinem − ACC)",
+                ))
             fig_k.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="salto")
-            fig_k.update_layout(title="Joelho — Kinem vs ACC (mesma fs)",
-                                  xaxis_title=x_label, hovermode="x unified",
-                                  template="plotly_white", height=380)
+            fig_k.update_layout(
+                title="Joelho — Kinem vs ACC (normalizado por z-score · diferença em cinza)",
+                xaxis_title=x_label, hovermode="x unified",
+                template="plotly_white", height=400,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+            )
             st.plotly_chart(fig_k, use_container_width=True)
