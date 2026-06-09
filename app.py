@@ -190,20 +190,58 @@ def apply_lowpass(df, fs, cutoff_hz, order=4):
     return result
 
 
-def get_aligned_data(files_data, offsets, peak_ref):
-    """Corta para janela comum e seta x=0 no pico."""
+def get_aligned_data(files_data, offsets, peak_ref, ref_file=None):
+    """
+    Alinha todos os arquivos usando ref_file (ex: Kinem) como comprimento de referência.
+    Arquivos mais curtos são preenchidos com NaN — aparecem como lacunas no gráfico.
+    """
     common_start = int(max(offsets.get(f, 0) for f in files_data))
-    common_end   = int(min(offsets.get(f, 0) + len(df) for f, df in files_data.items()))
+
+    # Usa ref_file para definir o fim da janela; senão, usa o mínimo comum
+    if ref_file and ref_file in files_data:
+        common_end = int(offsets.get(ref_file, 0) + len(files_data[ref_file]))
+    else:
+        common_end = int(min(offsets.get(f, 0) + len(df) for f, df in files_data.items()))
+
     if common_start >= common_end:
         return None, None, "Sem sobreposição após sincronização."
-    aligned = {}
-    for fname, df in files_data.items():
-        s = offsets.get(fname, 0)
-        aligned[fname] = df.iloc[int(common_start - s):int(common_end - s)].reset_index(drop=True)
-    peak_in_window = int(peak_ref - common_start)
-    x_axis = np.arange(common_end - common_start) - peak_in_window
+
     n = common_end - common_start
-    return aligned, x_axis, f"Janela comum: **{n} amostras** | pico do salto em **x = 0**"
+    aligned = {}
+    short_files = []
+
+    for fname, df in files_data.items():
+        s        = offsets.get(fname, 0)
+        i_start  = int(common_start - s)          # índice de início no df original
+        i_end    = int(common_end   - s)           # índice de fim   no df original
+        a_start  = max(0, i_start)
+        a_end    = min(len(df), i_end)
+
+        num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+        chunk    = df.iloc[a_start:a_end][num_cols].reset_index(drop=True)
+
+        pad_before = a_start - i_start             # amostras em falta no início
+        pad_after  = n - pad_before - len(chunk)   # amostras em falta no fim
+
+        if pad_before > 0 or pad_after > 0:
+            short_files.append(f"{fname} (faltam {max(0,pad_after)} amostras no fim)")
+            rows = {}
+            for col in num_cols:
+                rows[col] = np.concatenate([
+                    np.full(pad_before, np.nan),
+                    chunk[col].values,
+                    np.full(max(0, pad_after), np.nan),
+                ])
+            aligned[fname] = pd.DataFrame(rows)
+        else:
+            aligned[fname] = chunk
+
+    peak_in_window = int(peak_ref - common_start)
+    x_axis = np.arange(n) - peak_in_window
+    info = f"Janela: **{n} amostras** ({n/100:.1f} s) | pico em **x = 0**"
+    if short_files:
+        info += f"  ⚠️ arquivos mais curtos que o Kinem: {', '.join(short_files)}"
+    return aligned, x_axis, info
 
 
 # ──────────────────────────────────────────────
@@ -553,6 +591,7 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
         st.session_state.proc_data,
         st.session_state.offsets,
         st.session_state.peak_ref,
+        ref_file=kinem_ref,
     )
     if aligned_data is None:
         st.error(align_msg)
