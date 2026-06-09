@@ -638,7 +638,8 @@ with st.expander("⚙️ Colunas para check de qualidade (1 por fonte)"):
         ) if knee_gyr_num else None
 
 # ── Checar qualidade dos dados ─────────────────────────────────
-if st.button("🔍 Checar qualidade dos dados", use_container_width=True):
+show_qa = st.checkbox("🔍 Checar qualidade dos dados", value=False)
+if show_qa:
     if not st.session_state.proc_data:
         st.warning("Clique em **⚙️ Pré-processar e Sincronizar** antes.")
         st.stop()
