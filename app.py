@@ -182,29 +182,55 @@ def apply_detrend(df):
     return result
 
 
+def _signal_envelope(v):
+    """Envelope (abs) após remoção de baseline local com mediana rolante."""
+    win = min(201, max(3, (len(v) // 4) | 1))
+    bl  = pd.Series(v).rolling(win, center=True, min_periods=1).median().values
+    return np.abs(v - bl)
+
+
 def find_highest_peak(series, search_end):
-    """
-    Retorna o índice do pico de maior amplitude dentro das primeiras
-    search_end amostras.
-    Remove baseline local com mediana rolante (janela 2 s = 200 amostras)
-    antes de detectar — ideal para ACC de celular com drift não-linear.
-    """
+    """Pico de maior amplitude após remoção de baseline. Fallback para xcorr."""
     raw = series.fillna(0).values[:search_end].astype(float)
     if len(raw) == 0:
         return 0
-    # Remoção de baseline local: mediana rolante centrada, janela de 2 s
-    win = min(201, max(3, (len(raw) // 4) | 1))   # ímpar, máx 201
-    baseline = pd.Series(raw).rolling(win, center=True, min_periods=1).median().values
-    vals = np.abs(raw - baseline)
+    vals    = _signal_envelope(raw)
     max_val = vals.max()
     if max_val == 0:
         return int(np.argmax(vals))
-    # Pico real: proeminência ≥ 30% do máximo
     peaks, _ = sp_signal.find_peaks(vals, prominence=max_val * 0.30)
     if len(peaks) == 0:
         return int(np.argmax(vals))
-    # Retorna o pico de MAIOR amplitude (impacto, não pré-carga)
     return int(peaks[np.argmax(vals[peaks])])
+
+
+def find_sync_xcorr(kinem_ser, phone_ser, kinem_peak, search_end, fs):
+    """
+    Encontra a amostra de phone_ser que corresponde a kinem_peak
+    via correlação cruzada de envelopes — robusto a DC, drift e
+    diferenças de eixo entre Kinem e ACC do celular.
+    Fallback: find_highest_peak.
+    """
+    half_win = int(5 * fs)
+    k_start  = max(0, kinem_peak - half_win)
+    k_end    = min(len(kinem_ser), kinem_peak + half_win)
+
+    k_vals = try_numeric(kinem_ser).fillna(0).values[k_start:k_end].astype(float)
+    p_vals = try_numeric(phone_ser).fillna(0).values[:search_end].astype(float)
+
+    if len(p_vals) < len(k_vals) or len(k_vals) < 4:
+        return find_highest_peak(phone_ser, search_end)
+
+    ref_env   = _signal_envelope(k_vals)
+    phone_env = _signal_envelope(p_vals)
+
+    corr      = np.correlate(phone_env, ref_env, mode="valid")
+    lag       = int(np.argmax(corr))
+    phone_peak = lag + (kinem_peak - k_start)
+
+    if 0 <= phone_peak < search_end:
+        return phone_peak
+    return find_highest_peak(phone_ser, search_end)
 
 
 def apply_lowpass(df, fs, cutoff_hz, order=4):
@@ -491,20 +517,26 @@ with btn_col3:
             peak_knee = find_highest_peak(s_k_knee.iloc[k_start:k_end].reset_index(drop=True), k_end - k_start) + k_start
             msgs_sync.append(f"**Kinem Joelho (Côndilo)** — pico @ {peak_knee} ({peak_knee/fs_target:.2f} s) → Δ {(peak_knee-peak_k)/fs_target:+.3f} s")
 
-            # ── L5 ACC sincroniza com pico do Kinem L5 ──
+            # ── L5 ACC sincroniza com pico do Kinem L5 (xcorr) ──
             if l5_acc != NONE and l5_acc_col and l5_acc_col in raw_synced.get(l5_acc, pd.DataFrame()).columns:
-                s = try_numeric(raw_synced[l5_acc][l5_acc_col])
-                p = find_highest_peak(s, janela_samp)
+                p = find_sync_xcorr(
+                    raw_synced[kinem_ref][l5_kinem_col],
+                    raw_synced[l5_acc][l5_acc_col],
+                    peak_k, janela_samp, fs_target,
+                )
                 offsets[l5_acc] = peak_k - p
                 msgs_sync.append(f"**L5 ACC** — pico @ {p} ({p/fs_target:.2f} s) → offset {peak_k-p:+d}")
                 if l5_gyr != NONE:
                     offsets[l5_gyr] = peak_k - p
                     msgs_sync.append(f"**L5 GYR** — offset {peak_k-p:+d} (= ACC L5)")
 
-            # ── Joelho ACC sincroniza com pico do Côndilo ──
+            # ── Joelho ACC sincroniza com pico do Côndilo (xcorr) ──
             if knee_acc != NONE and knee_acc_col and knee_acc_col in raw_synced.get(knee_acc, pd.DataFrame()).columns:
-                s = try_numeric(raw_synced[knee_acc][knee_acc_col])
-                p = find_highest_peak(s, janela_samp)
+                p = find_sync_xcorr(
+                    raw_synced[kinem_ref][knee_kinem_col],
+                    raw_synced[knee_acc][knee_acc_col],
+                    peak_knee, janela_samp, fs_target,
+                )
                 offsets[knee_acc] = peak_knee - p
                 msgs_sync.append(f"**Joelho ACC** — pico @ {p} ({p/fs_target:.2f} s) → offset {peak_knee-p:+d}")
                 if knee_gyr != NONE:
