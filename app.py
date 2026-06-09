@@ -605,7 +605,10 @@ if st.button("🔍 Checar qualidade dos dados", use_container_width=True):
     mask = (qa_x >= qa_xmin) & (qa_x <= qa_xmax)
     x_view = qa_x[mask]
 
-    l5_sigs, joelho_sigs = [], []
+    # Separa sinais do Kinem dos sinais dos celulares, por grupo
+    l5_kinem_sigs, l5_phone_sigs     = [], []
+    joelho_kinem_sigs, joelho_phone_sigs = [], []
+
     for fname, df in qa_aligned.items():
         for col in df.columns:
             y = try_numeric(df[col])
@@ -619,13 +622,20 @@ if st.button("🔍 Checar qualidade dos dados", use_container_width=True):
             dcol = display_col_name(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
             lbl = f"{fname[:22]} · {dcol}"
             entry = (std, lbl, y_view)
+            is_kinem = (fname == kinem_ref)
             if cat == "l5":
-                l5_sigs.append(entry)
+                (l5_kinem_sigs if is_kinem else l5_phone_sigs).append(entry)
             elif cat == "joelho":
-                joelho_sigs.append(entry)
+                (joelho_kinem_sigs if is_kinem else joelho_phone_sigs).append(entry)
 
-    l5_top     = sorted(l5_sigs,     key=lambda e: e[0], reverse=True)[:3]
-    joelho_top = sorted(joelho_sigs, key=lambda e: e[0], reverse=True)[:3]
+    def build_top3(kinem_sigs, phone_sigs):
+        """1 Kinem de maior variação + 2 celulares de maior variação."""
+        kinem_pick = sorted(kinem_sigs, key=lambda e: e[0], reverse=True)[:1]
+        phone_pick = sorted(phone_sigs, key=lambda e: e[0], reverse=True)[:2]
+        return kinem_pick + phone_pick
+
+    l5_top     = build_top3(l5_kinem_sigs,     l5_phone_sigs)
+    joelho_top = build_top3(joelho_kinem_sigs, joelho_phone_sigs)
 
     qa_c1, qa_c2 = st.columns(2)
     for col_out, group, title in [
