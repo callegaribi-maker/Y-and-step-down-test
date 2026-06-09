@@ -581,6 +581,77 @@ with vc1:
 with vc2:
     view_end = st.number_input("Mostrar até (s)  — 0 = fim", value=0.0, step=1.0, key="view_end")
 
+x_label = ("Tempo (s)  —  0 = pico do salto" if x_unit == "Segundos" else "Amostra  —  0 = pico do salto")
+
+# ── Checar qualidade dos dados ─────────────────────────────────
+if st.button("🔍 Checar qualidade dos dados", use_container_width=True):
+    if not st.session_state.proc_data:
+        st.warning("Clique em **⚙️ Pré-processar e Sincronizar** antes.")
+        st.stop()
+
+    qa_aligned, qa_samp, _ = get_aligned_data(
+        st.session_state.proc_data,
+        st.session_state.offsets,
+        st.session_state.peak_ref,
+        ref_file=kinem_ref,
+    )
+    if qa_aligned is None:
+        st.error("Sem sobreposição após sincronização.")
+        st.stop()
+
+    qa_x = qa_samp / st.session_state.target_fs if x_unit == "Segundos" else qa_samp
+    qa_xmin = view_start if view_start != 0.0 else float(qa_x.min())
+    qa_xmax = view_end   if view_end > view_start else float(qa_x.max())
+    mask = (qa_x >= qa_xmin) & (qa_x <= qa_xmax)
+    x_view = qa_x[mask]
+
+    l5_sigs, joelho_sigs = [], []
+    for fname, df in qa_aligned.items():
+        for col in df.columns:
+            y = try_numeric(df[col])
+            if y.isna().all():
+                continue
+            y_view = y.values[mask].astype(float)
+            if np.all(np.isnan(y_view)):
+                continue
+            std = float(np.nanstd(y_view))
+            cat = classify_trace(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
+            dcol = display_col_name(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
+            lbl = f"{fname[:22]} · {dcol}"
+            entry = (std, lbl, y_view)
+            if cat == "l5":
+                l5_sigs.append(entry)
+            elif cat == "joelho":
+                joelho_sigs.append(entry)
+
+    l5_top     = sorted(l5_sigs,     key=lambda e: e[0], reverse=True)[:3]
+    joelho_top = sorted(joelho_sigs, key=lambda e: e[0], reverse=True)[:3]
+
+    qa_c1, qa_c2 = st.columns(2)
+    for col_out, group, title in [
+        (qa_c1, l5_top,     "🟢 L5 — top 3 variação"),
+        (qa_c2, joelho_top, "🟠 Joelho — top 3 variação"),
+    ]:
+        with col_out:
+            st.markdown(f"#### {title}")
+            if not group:
+                st.info("Nenhum sinal classificado neste grupo.")
+            else:
+                fig_qa = go.Figure()
+                for std_val, lbl, y_view in group:
+                    fig_qa.add_trace(go.Scatter(
+                        x=x_view, y=y_view, mode="lines",
+                        name=f"{lbl}  (σ={std_val:.3f})",
+                    ))
+                fig_qa.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="salto")
+                fig_qa.update_layout(
+                    xaxis=dict(title=x_label, range=[qa_xmin, qa_xmax]),
+                    height=380, template="plotly_white", hovermode="x unified",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+                    margin=dict(t=30, b=40),
+                )
+                st.plotly_chart(fig_qa, use_container_width=True)
+
 if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_width=True):
 
     if not st.session_state.proc_data:
@@ -600,8 +671,6 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
     st.info(align_msg)
 
     x_axis  = x_samp / target_fs if x_unit == "Segundos" else x_samp
-    x_label = ("Tempo (s)  —  0 = pico do salto" if x_unit == "Segundos"
-                else "Amostra  —  0 = pico do salto")
     x_min_data, x_max_data = float(x_axis.min()), float(x_axis.max())
     # Aplica janela de visualização definida pelo usuário
     x_min = view_start if view_start != 0.0 else x_min_data
