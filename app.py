@@ -370,17 +370,15 @@ with st.sidebar:
                              index=best_match(others, ("gyro", "joelho"), ("gyr", "knee"), ("gyro", "jo")))
 
 # ──────────────────────────────────────────────
-# Sidebar — 5. Sincronização
+# Sidebar — 5. Sincronização (oculto por padrão)
 # ──────────────────────────────────────────────
 with st.sidebar:
-    st.header("5 · Sincronização")
-    st.caption("A frequência de aquisição é detectada automaticamente da coluna de tempo de cada arquivo.")
-
-    fs_target = st.number_input(
-        "Frequência alvo após reamostragem (Hz)",
-        min_value=1, max_value=10000, value=100, step=10,
-        help="Todos os arquivos serão reamostrados para esta frequência comum.",
-    )
+    with st.expander("⚙️ Configurações avançadas de sincronização", expanded=False):
+        fs_target = st.number_input(
+            "Frequência alvo após reamostragem (Hz)",
+            min_value=1, max_value=10000, value=100, step=10,
+            help="Todos os arquivos serão reamostrados para esta frequência comum.",
+        )
 
 # ──────────────────────────────────────────────
 # Sidebar — 6. Processamento
@@ -564,7 +562,7 @@ if st.session_state.synced and st.session_state.raw_synced and st.session_state.
                 f"{'🔵' if i==0 else '🔴'} **{series[i][1]}**: {caps[i]}"
                 for i in range(len(series))
             )
-            st.caption(cap + "  ·  normalizado pelo pico  ·  sem filtro passa-baixa")
+            st.caption(cap + f"  ·  reamostrado a {_vfs:.0f} Hz  ·  normalizado pelo pico  ·  sem filtro passa-baixa")
             fig_v = go.Figure()
             for i, (s_n, lbl) in enumerate(series):
                 fig_v.add_trace(go.Scatter(x=_vx, y=s_n, mode="lines",
