@@ -320,7 +320,7 @@ with st.sidebar:
         index=col_default(kinem_num, ["l 5 a(z)", "l5 a(z)", "l5a(z)", "l 5 z", "l5_az", "l5"]),
     )
     knee_kinem_col = st.selectbox(
-        "Coluna Joelho vertical (verificação)",
+        "Coluna Joelho vertical (referência sync)",
         kinem_num,
         index=col_default(kinem_num, [
             "condilo lateral esq. a(z)", "condilo lateral dir. a(z)",
