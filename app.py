@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy import signal as sp_signal
 from scipy import interpolate
+import unicodedata
 import io
 
 st.set_page_config(page_title="Visualizador de Sinais", layout="wide")
@@ -54,6 +55,29 @@ def col_default(cols, keywords):
             if kw in str(c).lower():
                 return i
     return 0
+
+
+def norm(s):
+    """Normaliza string: minúsculas + remove acentos."""
+    return "".join(
+        c for c in unicodedata.normalize("NFD", str(s).lower())
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+def classify_trace(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr):
+    """Retorna 'l5', 'joelho' ou 'outro'."""
+    if fname in (l5_acc, l5_gyr):
+        return "l5"
+    if fname in (knee_acc, knee_gyr):
+        return "joelho"
+    if fname == kinem_ref:
+        cn = norm(col)
+        if "l5" in cn:
+            return "l5"
+        if any(k in cn for k in ["condilo", "joelho", "knee", "patela"]):
+            return "joelho"
+    return "outro"
 
 
 def detect_time_axis(df):
@@ -491,18 +515,11 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
         l5_traces, knee_traces, other_traces = [], [], []
         for t in traces:
             fn, cl = t[0], t[1]
-            cl_low = str(cl).lower()
-            if fn in (l5_acc, l5_gyr):
+            cat = classify_trace(fn, cl, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
+            if cat == "l5":
                 l5_traces.append(t)
-            elif fn in (knee_acc, knee_gyr):
+            elif cat == "joelho":
                 knee_traces.append(t)
-            elif fn == kinem_ref:
-                if "l5" in cl_low:
-                    l5_traces.append(t)
-                elif any(k in cl_low for k in ["joelho", "knee", "cond", "cândilo"]):
-                    knee_traces.append(t)
-                else:
-                    other_traces.append(t)
             else:
                 other_traces.append(t)
 
