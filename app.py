@@ -254,13 +254,16 @@ def get_aligned_data(files_data, offsets, peak_ref, ref_file=None):
 # Session state
 # ──────────────────────────────────────────────
 for k, v in [
-    ("files_data", {}),
-    ("proc_data",  {}),
-    ("offsets",    {}),
-    ("peak_ref",   0),
-    ("target_fs",  100),
-    ("fs_info",    {}),
-    ("show_preview", False),
+    ("files_data",          {}),
+    ("raw_synced",          {}),   # reamostrado, sem detrend/filtro
+    ("proc_data",           {}),   # reamostrado + detrend + filtro
+    ("proc_data_nofilter",  {}),   # reamostrado + detrend, sem filtro
+    ("offsets",             {}),
+    ("peak_ref",            None),
+    ("target_fs",           100),
+    ("fs_info",             {}),
+    ("show_preview",        False),
+    ("synced",              False), # controla se sync foi feito
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -367,10 +370,10 @@ with st.sidebar:
                              index=best_match(others, ("gyro", "joelho"), ("gyr", "knee"), ("gyro", "jo")))
 
 # ──────────────────────────────────────────────
-# Sidebar — 5. Pré-processamento & Sync
+# Sidebar — 5. Sincronização
 # ──────────────────────────────────────────────
 with st.sidebar:
-    st.header("5 · Pré-processamento & Sync")
+    st.header("5 · Sincronização")
     st.caption("A frequência de aquisição é detectada automaticamente da coluna de tempo de cada arquivo.")
 
     fs_target = st.number_input(
@@ -378,10 +381,19 @@ with st.sidebar:
         min_value=1, max_value=10000, value=100, step=10,
         help="Todos os arquivos serão reamostrados para esta frequência comum.",
     )
+    janela_seg = st.number_input(
+        "Buscar pico nos primeiros X segundos",
+        min_value=0.1, max_value=300.0, value=16.0, step=0.5,
+        help="Use um valor que cubra o início onde está o salto de sync.",
+    )
 
-    st.markdown("**Filtros opcionais**")
-    do_detrend = st.checkbox("Detrend (remover tendência linear)", value=False)
-    do_lowpass = st.checkbox("Filtro passa-baixa (Butterworth)", value=False)
+# ──────────────────────────────────────────────
+# Sidebar — 6. Processamento
+# ──────────────────────────────────────────────
+with st.sidebar:
+    st.header("6 · Processamento")
+    do_detrend = st.checkbox("Detrend (remover tendência linear)", value=True)
+    do_lowpass = st.checkbox("Filtro passa-baixa (Butterworth)", value=True)
     if do_lowpass:
         cutoff_hz  = st.number_input("Frequência de corte (Hz)",
                                       min_value=0.1, max_value=float(fs_target // 2),
@@ -390,84 +402,88 @@ with st.sidebar:
     else:
         cutoff_hz, filt_order = 20.0, 4
 
-    st.divider()
-
-    if st.button("👁 Preview sinais brutos"):
-        st.session_state.show_preview = not st.session_state.show_preview
-
-    janela_seg = st.number_input(
-        "Buscar pico nos primeiros X segundos",
-        min_value=0.1, max_value=300.0, value=5.0, step=0.5,
-        help="Use um valor pequeno que cubra só o início onde está o salto de sync.",
-    )
-
-    if st.button("⚙️ Pré-processar e Sincronizar", type="primary", use_container_width=True):
-        with st.spinner("Detectando frequências e reamostando…"):
-            proc     = {}
-            fs_info  = {}
-            msgs_pre = []
-
-            proc_nofilter = {}   # reamostrado + detrend, SEM lowpass (para verificação)
-            for fname, df in files_data.items():
-                r, fs_orig, desc = resample_to_regular(df, fs_target)
+    if st.session_state.synced:
+        if st.button("🔧 Processar", type="primary", use_container_width=True):
+            raw = st.session_state.raw_synced
+            proc, proc_nofilter = {}, {}
+            for fname, df in raw.items():
+                r = df.copy()
                 if do_detrend:
                     r = apply_detrend(r)
-                proc_nofilter[fname] = r
+                proc_nofilter[fname] = r.copy()
                 if do_lowpass:
                     r = apply_lowpass(r, fs_target, cutoff_hz, filt_order)
-                proc[fname]    = r
-                fs_info[fname] = fs_orig
+                proc[fname] = r
+            st.session_state.proc_data          = proc
+            st.session_state.proc_data_nofilter = proc_nofilter
+            st.success("✔ Processamento aplicado.")
+    else:
+        st.caption("⬆ Sincronize primeiro.")
+
+# ──────────────────────────────────────────────
+# Botões: Preview + Sincronizar (lado a lado)
+# ──────────────────────────────────────────────
+btn_col1, btn_col2 = st.columns(2)
+with btn_col1:
+    if st.button("👁 Preview sinais brutos", use_container_width=True):
+        st.session_state.show_preview = not st.session_state.show_preview
+with btn_col2:
+    if st.button("🔗 Sincronizar", type="primary", use_container_width=True):
+        with st.spinner("Reamostando e detectando pico…"):
+            raw_synced = {}
+            fs_info    = {}
+            msgs_pre   = []
+            for fname, df in files_data.items():
+                r, fs_orig, desc = resample_to_regular(df, fs_target)
+                raw_synced[fname]  = r
+                fs_info[fname]     = fs_orig
                 msgs_pre.append(f"**{fname[:35]}**: {desc}")
 
-            st.session_state.proc_data        = proc
-            st.session_state.proc_data_nofilter = proc_nofilter
-            st.session_state.target_fs = fs_target
-            st.session_state.fs_info   = fs_info
+            st.session_state.raw_synced = raw_synced
+            st.session_state.target_fs  = fs_target
+            st.session_state.fs_info    = fs_info
+            # Limpa proc para forçar re-processar
+            st.session_state.proc_data          = {}
+            st.session_state.proc_data_nofilter = {}
 
-            # Sincronizar por pico
             janela_samp = int(janela_seg * fs_target)
-            offsets = {kinem_ref: 0}
-            msgs_sync = []
+            offsets     = {kinem_ref: 0}
+            msgs_sync   = []
 
-            # Sincronização usa SEMPRE dados sem filtro (proc_nofilter)
-            # para que o pico do salto não seja atenuado pelo lowpass
-            s_k    = try_numeric(proc_nofilter[kinem_ref][l5_kinem_col]).abs()
+            s_k    = try_numeric(raw_synced[kinem_ref][l5_kinem_col]).abs()
             peak_k = int(s_k.iloc[:janela_samp].idxmax())
             st.session_state.peak_ref = peak_k
+            st.session_state.synced   = True
             msgs_sync.append(f"**Kinem** — pico @ {peak_k} ({peak_k/fs_target:.2f} s)")
 
-            if l5_acc != NONE and l5_acc_col and l5_acc_col in proc_nofilter.get(l5_acc, pd.DataFrame()).columns:
-                s = try_numeric(proc_nofilter[l5_acc][l5_acc_col]).abs()
+            if l5_acc != NONE and l5_acc_col and l5_acc_col in raw_synced.get(l5_acc, pd.DataFrame()).columns:
+                s = try_numeric(raw_synced[l5_acc][l5_acc_col]).abs()
                 p = int(s.iloc[:janela_samp].idxmax())
-                off = peak_k - p
-                offsets[l5_acc] = off
-                msgs_sync.append(f"**L5 ACC** — pico @ {p} ({p/fs_target:.2f} s) → offset {off:+d}")
+                offsets[l5_acc] = peak_k - p
+                msgs_sync.append(f"**L5 ACC** — pico @ {p} ({p/fs_target:.2f} s) → offset {peak_k-p:+d}")
                 if l5_gyr != NONE:
-                    offsets[l5_gyr] = off
-                    msgs_sync.append(f"**L5 GYR** — offset {off:+d} (= ACC)")
+                    offsets[l5_gyr] = peak_k - p
+                    msgs_sync.append(f"**L5 GYR** — offset {peak_k-p:+d} (= ACC)")
 
-            if knee_acc != NONE and knee_acc_col and knee_acc_col in proc_nofilter.get(knee_acc, pd.DataFrame()).columns:
-                s = try_numeric(proc_nofilter[knee_acc][knee_acc_col]).abs()
+            if knee_acc != NONE and knee_acc_col and knee_acc_col in raw_synced.get(knee_acc, pd.DataFrame()).columns:
+                s = try_numeric(raw_synced[knee_acc][knee_acc_col]).abs()
                 p = int(s.iloc[:janela_samp].idxmax())
-                off = peak_k - p
-                offsets[knee_acc] = off
-                msgs_sync.append(f"**Joelho ACC** — pico @ {p} ({p/fs_target:.2f} s) → offset {off:+d}")
+                offsets[knee_acc] = peak_k - p
+                msgs_sync.append(f"**Joelho ACC** — pico @ {p} ({p/fs_target:.2f} s) → offset {peak_k-p:+d}")
                 if knee_gyr != NONE:
-                    offsets[knee_gyr] = off
-                    msgs_sync.append(f"**Joelho GYR** — offset {off:+d} (= ACC)")
+                    offsets[knee_gyr] = peak_k - p
+                    msgs_sync.append(f"**Joelho GYR** — offset {peak_k-p:+d} (= ACC)")
 
             for fname in file_names:
                 if fname not in offsets:
                     offsets[fname] = 0
-
             st.session_state.offsets = offsets
 
-            st.markdown("**Frequências detectadas:**")
-            for m in msgs_pre:
-                st.write(m)
-            st.markdown("**Sincronização:**")
-            for m in msgs_sync:
-                st.write(m)
+            with st.expander("📋 Detalhes da sincronização", expanded=False):
+                st.markdown("**Frequências detectadas:**")
+                for m in msgs_pre: st.write(m)
+                st.markdown("**Offsets calculados:**")
+                for m in msgs_sync: st.write(m)
 
 # ──────────────────────────────────────────────
 # Preview bruto
@@ -509,16 +525,16 @@ if st.session_state.show_preview:
 # ──────────────────────────────────────────────
 # Verificação de alinhamento (abaixo do preview bruto)
 # ──────────────────────────────────────────────
-if st.session_state.proc_data and st.session_state.offsets and st.session_state.peak_ref is not None:
+if st.session_state.synced and st.session_state.raw_synced and st.session_state.peak_ref is not None:
     _vfs = st.session_state.target_fs or 100
     _vraw, _vx_samp, _ = get_aligned_data(
-        st.session_state.get("proc_data_nofilter", st.session_state.proc_data),
+        st.session_state.raw_synced,
         st.session_state.offsets,
         st.session_state.peak_ref,
         ref_file=kinem_ref,
     )
     if _vraw is None:
-        _vraw   = {f: df.copy() for f, df in st.session_state.proc_data.items()}
+        _vraw    = {f: df.copy() for f, df in st.session_state.raw_synced.items()}
         _vx_samp = np.arange(max(len(d) for d in _vraw.values())) - st.session_state.peak_ref
     _vx = _vx_samp / _vfs
 
@@ -573,7 +589,9 @@ if st.session_state.proc_data and st.session_state.offsets and st.session_state.
 # ──────────────────────────────────────────────
 # Seleção de colunas
 # ──────────────────────────────────────────────
-display_data = st.session_state.proc_data if st.session_state.proc_data else files_data
+display_data = (st.session_state.proc_data
+                or st.session_state.raw_synced
+                or files_data)
 target_fs    = st.session_state.target_fs
 fs_info      = st.session_state.fs_info
 
@@ -678,12 +696,12 @@ with st.expander("⚙️ Colunas para check de qualidade (1 por fonte)"):
 # ── Checar qualidade dos dados ─────────────────────────────────
 show_qa = st.checkbox("🔍 Checar qualidade dos dados", value=False)
 if show_qa:
-    if not st.session_state.proc_data:
-        st.warning("Clique em **⚙️ Pré-processar e Sincronizar** antes.")
+    if not st.session_state.synced:
+        st.warning("Clique em **🔗 Sincronizar** antes.")
         st.stop()
 
     qa_aligned, qa_samp, _ = get_aligned_data(
-        st.session_state.proc_data,
+        st.session_state.proc_data or st.session_state.raw_synced,
         st.session_state.offsets,
         st.session_state.peak_ref,
         ref_file=kinem_ref,
@@ -751,12 +769,13 @@ if show_qa:
 
 if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_width=True):
 
-    if not st.session_state.proc_data:
-        st.warning("Clique em **⚙️ Pré-processar e Sincronizar** antes de plotar.")
+    if not st.session_state.synced:
+        st.warning("Clique em **🔗 Sincronizar** antes de plotar.")
         st.stop()
+    plot_data = st.session_state.proc_data or st.session_state.raw_synced
 
     aligned_data, x_samp, align_msg = get_aligned_data(
-        st.session_state.proc_data,
+        plot_data,
         st.session_state.offsets,
         st.session_state.peak_ref,
         ref_file=kinem_ref,
