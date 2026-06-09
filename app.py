@@ -73,7 +73,7 @@ def classify_trace(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr):
         return "joelho"
     if fname == kinem_ref:
         cn = norm(col)
-        if "l5" in cn:
+        if "l5" in cn or "l 5" in cn:
             return "l5"
         if any(k in cn for k in ["condilo", "joelho", "knee", "patela"]):
             return "joelho"
