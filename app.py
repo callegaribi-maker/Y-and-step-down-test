@@ -184,21 +184,23 @@ def apply_detrend(df):
 
 def find_highest_peak(series, search_end):
     """
-    Retorna o índice do pico de maior valor absoluto dentro das primeiras
-    search_end amostras. Usa find_peaks para garantir que é um pico real
-    (não drift). Fallback para idxmax se nenhum pico for encontrado.
+    Retorna o índice do pico de maior amplitude dentro das primeiras
+    search_end amostras. Aplica detrend temporário (só para detecção)
+    para eliminar DC offset/drift que confunde o abs().
     """
-    vals = series.abs().fillna(0).values[:search_end]
-    if len(vals) == 0:
+    raw = series.fillna(0).values[:search_end].astype(float)
+    if len(raw) == 0:
         return 0
+    # Detrend apenas para detecção — não altera dados originais
+    vals = np.abs(sp_signal.detrend(raw))
     max_val = vals.max()
     if max_val == 0:
         return int(np.argmax(vals))
-    # Exige proeminência mínima de 20% do pico máximo
-    peaks, _ = sp_signal.find_peaks(vals, prominence=max_val * 0.20)
+    # Pico real: proeminência ≥ 30% do máximo (evita ruído e pré-picos)
+    peaks, _ = sp_signal.find_peaks(vals, prominence=max_val * 0.30)
     if len(peaks) == 0:
         return int(np.argmax(vals))
-    # Retorna o pico de maior amplitude
+    # Retorna o pico de MAIOR amplitude (impacto, não pré-carga)
     return int(peaks[np.argmax(vals[peaks])])
 
 
