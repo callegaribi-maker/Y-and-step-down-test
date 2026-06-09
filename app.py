@@ -50,9 +50,12 @@ def numeric_cols(df):
 
 
 def col_default(cols, keywords):
+    """Retorna índice da primeira coluna que contém algum keyword (sem acentos, case-insensitive)."""
+    normed_cols = [norm(c) for c in cols]
     for kw in keywords:
-        for i, c in enumerate(cols):
-            if kw in str(c).lower():
+        kw_n = norm(kw)
+        for i, cn in enumerate(normed_cols):
+            if kw_n in cn:
                 return i
     return 0
 
@@ -316,7 +319,11 @@ with st.sidebar:
     knee_kinem_col = st.selectbox(
         "Coluna Joelho vertical (verificação)",
         kinem_num,
-        index=col_default(kinem_num, ["condilo", "côndilo", "joelho a(z)", "knee a(z)", "joelho", "knee"]),
+        index=col_default(kinem_num, [
+            "condilo lateral esq. a(z)", "condilo lateral dir. a(z)",
+            "condilo a(z)", "joelho a(z)", "knee a(z)",
+            "condilo lateral esq.", "condilo", "côndilo", "joelho", "knee",
+        ]),
     )
 
 # ──────────────────────────────────────────────
@@ -400,17 +407,20 @@ with st.sidebar:
             fs_info  = {}
             msgs_pre = []
 
+            proc_nofilter = {}   # reamostrado + detrend, SEM lowpass (para verificação)
             for fname, df in files_data.items():
                 r, fs_orig, desc = resample_to_regular(df, fs_target)
                 if do_detrend:
                     r = apply_detrend(r)
+                proc_nofilter[fname] = r
                 if do_lowpass:
                     r = apply_lowpass(r, fs_target, cutoff_hz, filt_order)
                 proc[fname]    = r
                 fs_info[fname] = fs_orig
                 msgs_pre.append(f"**{fname[:35]}**: {desc}")
 
-            st.session_state.proc_data = proc
+            st.session_state.proc_data        = proc
+            st.session_state.proc_data_nofilter = proc_nofilter
             st.session_state.target_fs = fs_target
             st.session_state.fs_info   = fs_info
 
@@ -562,9 +572,10 @@ with st.expander("⚙️ Colunas para check de qualidade (1 por fonte)"):
         qa_kinem_knee_col = st.selectbox(
             "🔵 Kinem — Joelho", kinem_num, key="qa_kknee",
             index=col_default(kinem_num, [
-                "condilo lateral esq. a(z)", "condilo a(z)", "condilo a(z)",
+                "condilo lateral esq. a(z)", "condilo lateral dir. a(z)",
+                "condilo a(z)", "joelho a(z)",
                 "condilo d(z)", "condilo d(y)", "condilo p(z)", "condilo p(y)",
-                "condilo v(z)", "condilo",
+                "condilo v(z)", "condilo lateral esq.", "condilo",
                 "joelho a(z)", "joelho d", "joelho p",
             ]),
         )
@@ -740,89 +751,68 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
             st.markdown("#### Outros sinais")
             render_col_charts(other_traces)
 
-    # ── Verificação L5 ──────────────────────────────────────────
-    l5_check = []
-    if l5_kinem_col in aligned_data.get(kinem_ref, pd.DataFrame()).columns:
-        l5_check.append((kinem_ref, l5_kinem_col, "Kinem L5"))
-    if l5_acc != NONE and l5_acc_col and l5_acc in aligned_data:
-        if l5_acc_col in aligned_data[l5_acc].columns:
-            l5_check.append((l5_acc, l5_acc_col, "ACC L5"))
+    # ── Verificação de alinhamento (usa dados SEM lowpass para ver o pico real) ──
+    raw_aligned, raw_x_samp, _ = get_aligned_data(
+        st.session_state.get("proc_data_nofilter", st.session_state.proc_data),
+        st.session_state.offsets,
+        st.session_state.peak_ref,
+        ref_file=kinem_ref,
+    )
+    if raw_aligned is None:
+        raw_aligned = aligned_data
+        raw_x_samp  = x_samp
+    raw_x_axis = raw_x_samp / target_fs   # sempre em segundos
 
-    if len(l5_check) > 1:
-        with st.expander("🔍 Verificação — alinhamento L5"):
-            st.caption(
-                f"🔵 Kinem: `{kinem_ref}` · `{l5_kinem_col}`  |  "
-                f"🔴 ACC L5: `{l5_acc}` · `{l5_acc_col}`"
+    def render_verification(title, kinem_col, phone_file, phone_col, label_k, label_p):
+        check = []
+        df_k = raw_aligned.get(kinem_ref, pd.DataFrame())
+        if kinem_col in df_k.columns:
+            check.append((df_k, kinem_col, label_k))
+        if phone_file != NONE and phone_col and phone_file in raw_aligned:
+            df_p = raw_aligned[phone_file]
+            if phone_col in df_p.columns:
+                check.append((df_p, phone_col, label_p))
+        if len(check) < 2:
+            return
+        with st.expander(f"🔍 Verificação — alinhamento {title}"):
+            # normaliza pelo pico (máx abs) → ambas as linhas ficam em ±1
+            colors_v = ["blue", "red"]
+            series = []
+            captions = []
+            for df_s, col, lbl in check:
+                s = try_numeric(df_s[col]).fillna(0).values.astype(float)
+                peak = np.nanmax(np.abs(s))
+                s_norm = s / peak if peak > 0 else s
+                series.append((s_norm, lbl))
+                captions.append(f"`{col}`")
+            caption_txt = "  |  ".join(
+                f"{'🔵' if i==0 else '🔴'} **{series[i][1]}**: {captions[i]}"
+                for i in range(len(series))
             )
-            series_v = []
-            for fname, col, label in l5_check:
-                s = try_numeric(aligned_data[fname][col]).values.astype(float)
-                std = s.std()
-                s_norm = (s - s.mean()) / std if std > 0 else s - s.mean()
-                series_v.append((s_norm, label))
+            st.caption(caption_txt + "  ·  normalizado pelo pico  ·  sem filtro passa-baixa")
             fig_v = go.Figure()
-            colors = ["blue", "red"]
-            for i, (s_norm, label) in enumerate(series_v):
+            for i, (s_norm, lbl) in enumerate(series):
                 fig_v.add_trace(go.Scatter(
-                    x=x_axis, y=s_norm, mode="lines",
-                    line=dict(color=colors[i], width=1.5),
-                    name=label,
+                    x=raw_x_axis, y=s_norm, mode="lines",
+                    line=dict(color=colors_v[i], width=2),
+                    name=lbl, opacity=0.85,
                 ))
-            if len(series_v) == 2:
-                diff = series_v[0][0] - series_v[1][0]
+            if len(series) == 2:
                 fig_v.add_trace(go.Scatter(
-                    x=x_axis, y=diff, mode="lines",
+                    x=raw_x_axis, y=series[0][0] - series[1][0], mode="lines",
                     line=dict(color="gray", width=1, dash="dot"),
-                    name="Diferença (Kinem − ACC)",
+                    name="Diferença",
                 ))
-            fig_v.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="salto")
+            fig_v.add_vline(x=0, line_dash="dash", line_color="black",
+                            annotation_text="salto", annotation_position="top right")
             fig_v.update_layout(
-                title="L5 — Kinem vs ACC (normalizado por z-score · diferença em cinza)",
-                xaxis_title=x_label, hovermode="x unified",
-                template="plotly_white", height=400,
+                title=f"{title} — normalizado pelo pico (sem filtro)",
+                xaxis=dict(title="Tempo (s) — 0 = pico do salto", range=[-5, 5]),
+                yaxis=dict(title="Amplitude norm.", range=[-1.3, 1.3]),
+                hovermode="x unified", template="plotly_white", height=350,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
             )
             st.plotly_chart(fig_v, use_container_width=True)
 
-    # ── Verificação Joelho ──────────────────────────────────────
-    knee_check = []
-    if knee_kinem_col in aligned_data.get(kinem_ref, pd.DataFrame()).columns:
-        knee_check.append((kinem_ref, knee_kinem_col, "Kinem Joelho"))
-    if knee_acc != NONE and knee_acc_col and knee_acc in aligned_data:
-        if knee_acc_col in aligned_data[knee_acc].columns:
-            knee_check.append((knee_acc, knee_acc_col, "ACC Joelho"))
-
-    if len(knee_check) > 1:
-        with st.expander("🔍 Verificação — alinhamento Joelho"):
-            st.caption(
-                f"🔵 Kinem: `{kinem_ref}` · `{knee_kinem_col}`  |  "
-                f"🔴 ACC Joelho: `{knee_acc}` · `{knee_acc_col}`"
-            )
-            series_k = []
-            for fname, col, label in knee_check:
-                s = try_numeric(aligned_data[fname][col]).values.astype(float)
-                std = s.std()
-                s_norm = (s - s.mean()) / std if std > 0 else s - s.mean()
-                series_k.append((s_norm, label))
-            fig_k = go.Figure()
-            for i, (s_norm, label) in enumerate(series_k):
-                fig_k.add_trace(go.Scatter(
-                    x=x_axis, y=s_norm, mode="lines",
-                    line=dict(color=colors[i], width=1.5),
-                    name=label,
-                ))
-            if len(series_k) == 2:
-                diff = series_k[0][0] - series_k[1][0]
-                fig_k.add_trace(go.Scatter(
-                    x=x_axis, y=diff, mode="lines",
-                    line=dict(color="gray", width=1, dash="dot"),
-                    name="Diferença (Kinem − ACC)",
-                ))
-            fig_k.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="salto")
-            fig_k.update_layout(
-                title="Joelho — Kinem vs ACC (normalizado por z-score · diferença em cinza)",
-                xaxis_title=x_label, hovermode="x unified",
-                template="plotly_white", height=400,
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-            )
-            st.plotly_chart(fig_k, use_container_width=True)
+    render_verification("L5",    l5_kinem_col,   l5_acc,   l5_acc_col,   "Kinem L5",   "ACC L5")
+    render_verification("Joelho", knee_kinem_col, knee_acc, knee_acc_col, "Kinem Joelho", "ACC Joelho")
