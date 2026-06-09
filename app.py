@@ -610,20 +610,32 @@ with st.expander("⚙️ Colunas para check de qualidade (1 por fonte)"):
 
     # ---- Celular L5 ----
     l5_acc_num  = numeric_cols(display_data.get(l5_acc,  pd.DataFrame())) if l5_acc  != NONE else []
+    l5_gyr_num  = numeric_cols(display_data.get(l5_gyr,  pd.DataFrame())) if l5_gyr  != NONE else []
     knee_acc_num = numeric_cols(display_data.get(knee_acc, pd.DataFrame())) if knee_acc != NONE else []
+    knee_gyr_num = numeric_cols(display_data.get(knee_gyr, pd.DataFrame())) if knee_gyr != NONE else []
 
     with qk1:
-        qa_phone_l5_col = st.selectbox(
-            "🟢 Celular — L5", l5_acc_num if l5_acc_num else ["—"],
-            key="qa_pl5",
+        qa_acc_l5_col = st.selectbox(
+            "🟢 ACC — L5", l5_acc_num if l5_acc_num else ["—"],
+            key="qa_accl5",
             index=col_default(l5_acc_num, ["z", "y", "x"]) if l5_acc_num else 0,
         ) if l5_acc_num else None
+        qa_gyr_l5_col = st.selectbox(
+            "🟢 GYR — L5", l5_gyr_num if l5_gyr_num else ["—"],
+            key="qa_gyrl5",
+            index=col_default(l5_gyr_num, ["z", "y", "x"]) if l5_gyr_num else 0,
+        ) if l5_gyr_num else None
     with qk2:
-        qa_phone_knee_col = st.selectbox(
-            "🟠 Celular — Joelho", knee_acc_num if knee_acc_num else ["—"],
-            key="qa_pknee",
+        qa_acc_knee_col = st.selectbox(
+            "🟠 ACC — Joelho", knee_acc_num if knee_acc_num else ["—"],
+            key="qa_accknee",
             index=col_default(knee_acc_num, ["z", "y", "x"]) if knee_acc_num else 0,
         ) if knee_acc_num else None
+        qa_gyr_knee_col = st.selectbox(
+            "🟠 GYR — Joelho", knee_gyr_num if knee_gyr_num else ["—"],
+            key="qa_gyrknee",
+            index=col_default(knee_gyr_num, ["z", "y", "x"]) if knee_gyr_num else 0,
+        ) if knee_gyr_num else None
 
 # ── Checar qualidade dos dados ─────────────────────────────────
 if st.button("🔍 Checar qualidade dos dados", use_container_width=True):
@@ -658,14 +670,16 @@ if st.button("🔍 Checar qualidade dos dados", use_container_width=True):
         dcol = display_col_name(fname, col_name, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
         return (float(np.nanstd(y)), f"{fname[:22]} · {dcol}", y)
 
-    # Monta os 4 sinais: 1 Kinem L5 + 1 celular L5 + 1 Kinem Joelho + 1 celular Joelho
-    e_kl5   = get_entry(kinem_ref, qa_kinem_l5_col)
-    e_pl5   = get_entry(l5_acc if l5_acc != NONE else "", qa_phone_l5_col)
-    e_kknee = get_entry(kinem_ref, qa_kinem_knee_col)
-    e_pknee = get_entry(knee_acc if knee_acc != NONE else "", qa_phone_knee_col)
+    # Monta os sinais: Kinem + ACC + GYR para cada grupo
+    e_kl5      = get_entry(kinem_ref, qa_kinem_l5_col)
+    e_accl5    = get_entry(l5_acc   if l5_acc   != NONE else "", qa_acc_l5_col)
+    e_gyrl5    = get_entry(l5_gyr   if l5_gyr   != NONE else "", qa_gyr_l5_col)
+    e_kknee    = get_entry(kinem_ref, qa_kinem_knee_col)
+    e_accknee  = get_entry(knee_acc if knee_acc != NONE else "", qa_acc_knee_col)
+    e_gyrknee  = get_entry(knee_gyr if knee_gyr != NONE else "", qa_gyr_knee_col)
 
-    l5_top     = [e for e in [e_kl5,   e_pl5]   if e]
-    joelho_top = [e for e in [e_kknee, e_pknee] if e]
+    l5_top     = [e for e in [e_kl5,   e_accl5,   e_gyrl5]   if e]
+    joelho_top = [e for e in [e_kknee, e_accknee, e_gyrknee] if e]
 
     qa_c1, qa_c2 = st.columns(2)
     for col_out, group, title in [
