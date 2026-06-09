@@ -474,7 +474,7 @@ with st.sidebar:
 # Sidebar — 6. Processamento
 # ──────────────────────────────────────────────
 with st.sidebar:
-    st.header("6 · Processamento")
+    st.header("5 · Processamento")
     do_detrend = st.checkbox("Detrend (remover tendência linear)", value=True)
     do_lowpass = st.checkbox("Filtro passa-baixa (Butterworth)", value=True)
     if do_lowpass:
