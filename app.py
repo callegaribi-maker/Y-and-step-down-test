@@ -468,6 +468,70 @@ with st.sidebar:
                 st.write(m)
 
 # ──────────────────────────────────────────────
+# Verificação de alinhamento (logo após sync)
+# ──────────────────────────────────────────────
+if st.session_state.proc_data and st.session_state.offsets and st.session_state.peak_ref is not None:
+    _vfs = st.session_state.target_fs or 100
+    _vraw, _vx_samp, _ = get_aligned_data(
+        st.session_state.get("proc_data_nofilter", st.session_state.proc_data),
+        st.session_state.offsets,
+        st.session_state.peak_ref,
+        ref_file=kinem_ref,
+    )
+    if _vraw is None:
+        _vraw   = {f: df.copy() for f, df in st.session_state.proc_data.items()}
+        _vx_samp = np.arange(max(len(d) for d in _vraw.values())) - st.session_state.peak_ref
+    _vx = _vx_samp / _vfs
+
+    def _render_verif(title, kinem_col, phone_file, phone_col, label_k, label_p):
+        check = []
+        df_k = _vraw.get(kinem_ref, pd.DataFrame())
+        if kinem_col in df_k.columns:
+            check.append((df_k, kinem_col, label_k))
+        if phone_file != NONE and phone_col and phone_file in _vraw:
+            df_p = _vraw[phone_file]
+            if phone_col in df_p.columns:
+                check.append((df_p, phone_col, label_p))
+        if len(check) < 2:
+            return
+        with st.expander(f"🔍 Verificação — alinhamento {title}", expanded=True):
+            colors_v = ["blue", "red"]
+            series = []
+            caps = []
+            for df_s, col, lbl in check:
+                s = try_numeric(df_s[col]).fillna(0).values.astype(float)
+                pk = np.nanmax(np.abs(s))
+                series.append((s / pk if pk > 0 else s, lbl))
+                caps.append(f"`{col}`")
+            cap = "  |  ".join(
+                f"{'🔵' if i==0 else '🔴'} **{series[i][1]}**: {caps[i]}"
+                for i in range(len(series))
+            )
+            st.caption(cap + "  ·  normalizado pelo pico  ·  sem filtro passa-baixa")
+            fig_v = go.Figure()
+            for i, (s_n, lbl) in enumerate(series):
+                fig_v.add_trace(go.Scatter(x=_vx, y=s_n, mode="lines",
+                    line=dict(color=colors_v[i], width=2), name=lbl, opacity=0.85))
+            if len(series) == 2:
+                fig_v.add_trace(go.Scatter(x=_vx, y=series[0][0]-series[1][0], mode="lines",
+                    line=dict(color="gray", width=1, dash="dot"), name="Diferença"))
+            fig_v.add_vline(x=0, line_dash="dash", line_color="black",
+                            annotation_text="salto", annotation_position="top right")
+            fig_v.update_layout(
+                title=f"{title} — normalizado pelo pico (sem filtro)",
+                xaxis=dict(title="Tempo (s)  —  0 = pico do salto", range=[-5, 5]),
+                yaxis=dict(title="Amplitude norm.", range=[-1.3, 1.3]),
+                hovermode="x unified", template="plotly_white", height=320,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+                margin=dict(t=50, b=40),
+            )
+            st.plotly_chart(fig_v, use_container_width=True)
+
+    _render_verif("L5",     l5_kinem_col,   l5_acc,   l5_acc_col,   "Kinem L5",     "ACC L5")
+    _render_verif("Joelho", knee_kinem_col, knee_acc, knee_acc_col, "Kinem Joelho", "ACC Joelho")
+    st.divider()
+
+# ──────────────────────────────────────────────
 # Preview bruto
 # ──────────────────────────────────────────────
 if st.session_state.show_preview:
@@ -751,68 +815,3 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
             st.markdown("#### Outros sinais")
             render_col_charts(other_traces)
 
-    # ── Verificação de alinhamento (usa dados SEM lowpass para ver o pico real) ──
-    raw_aligned, raw_x_samp, _ = get_aligned_data(
-        st.session_state.get("proc_data_nofilter", st.session_state.proc_data),
-        st.session_state.offsets,
-        st.session_state.peak_ref,
-        ref_file=kinem_ref,
-    )
-    if raw_aligned is None:
-        raw_aligned = aligned_data
-        raw_x_samp  = x_samp
-    raw_x_axis = raw_x_samp / target_fs   # sempre em segundos
-
-    def render_verification(title, kinem_col, phone_file, phone_col, label_k, label_p):
-        check = []
-        df_k = raw_aligned.get(kinem_ref, pd.DataFrame())
-        if kinem_col in df_k.columns:
-            check.append((df_k, kinem_col, label_k))
-        if phone_file != NONE and phone_col and phone_file in raw_aligned:
-            df_p = raw_aligned[phone_file]
-            if phone_col in df_p.columns:
-                check.append((df_p, phone_col, label_p))
-        if len(check) < 2:
-            return
-        with st.expander(f"🔍 Verificação — alinhamento {title}"):
-            # normaliza pelo pico (máx abs) → ambas as linhas ficam em ±1
-            colors_v = ["blue", "red"]
-            series = []
-            captions = []
-            for df_s, col, lbl in check:
-                s = try_numeric(df_s[col]).fillna(0).values.astype(float)
-                peak = np.nanmax(np.abs(s))
-                s_norm = s / peak if peak > 0 else s
-                series.append((s_norm, lbl))
-                captions.append(f"`{col}`")
-            caption_txt = "  |  ".join(
-                f"{'🔵' if i==0 else '🔴'} **{series[i][1]}**: {captions[i]}"
-                for i in range(len(series))
-            )
-            st.caption(caption_txt + "  ·  normalizado pelo pico  ·  sem filtro passa-baixa")
-            fig_v = go.Figure()
-            for i, (s_norm, lbl) in enumerate(series):
-                fig_v.add_trace(go.Scatter(
-                    x=raw_x_axis, y=s_norm, mode="lines",
-                    line=dict(color=colors_v[i], width=2),
-                    name=lbl, opacity=0.85,
-                ))
-            if len(series) == 2:
-                fig_v.add_trace(go.Scatter(
-                    x=raw_x_axis, y=series[0][0] - series[1][0], mode="lines",
-                    line=dict(color="gray", width=1, dash="dot"),
-                    name="Diferença",
-                ))
-            fig_v.add_vline(x=0, line_dash="dash", line_color="black",
-                            annotation_text="salto", annotation_position="top right")
-            fig_v.update_layout(
-                title=f"{title} — normalizado pelo pico (sem filtro)",
-                xaxis=dict(title="Tempo (s) — 0 = pico do salto", range=[-5, 5]),
-                yaxis=dict(title="Amplitude norm.", range=[-1.3, 1.3]),
-                hovermode="x unified", template="plotly_white", height=350,
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-            )
-            st.plotly_chart(fig_v, use_container_width=True)
-
-    render_verification("L5",    l5_kinem_col,   l5_acc,   l5_acc_col,   "Kinem L5",   "ACC L5")
-    render_verification("Joelho", knee_kinem_col, knee_acc, knee_acc_col, "Kinem Joelho", "ACC Joelho")
