@@ -412,9 +412,9 @@ st.divider()
 x_unit    = st.radio("Eixo x", ["Segundos", "Amostras"], horizontal=True)
 plot_mode = st.radio(
     "Modo de plot",
-    ["Um por sinal", "Todos no mesmo gráfico", "Personalizado"],
+    ["L5 | Joelho (lado a lado)", "Um por sinal", "Todos no mesmo gráfico", "Personalizado"],
     horizontal=True,
-    help="'Personalizado' permite escolher quais sinais compartilham o mesmo gráfico.",
+    help="'L5 | Joelho' organiza em duas colunas. 'Personalizado' permite agrupar livremente.",
 )
 
 # Lista de todos os sinais atualmente selecionados
@@ -485,6 +485,56 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
 
     if not traces:
         st.warning("Nenhuma coluna selecionada.")
+
+    elif plot_mode == "L5 | Joelho (lado a lado)":
+        # Classifica cada trace em L5, Joelho ou Outros
+        l5_traces, knee_traces, other_traces = [], [], []
+        for t in traces:
+            fn, cl = t[0], t[1]
+            cl_low = str(cl).lower()
+            if fn in (l5_acc, l5_gyr):
+                l5_traces.append(t)
+            elif fn in (knee_acc, knee_gyr):
+                knee_traces.append(t)
+            elif fn == kinem_ref:
+                if "l5" in cl_low:
+                    l5_traces.append(t)
+                elif any(k in cl_low for k in ["joelho", "knee", "cond", "cândilo"]):
+                    knee_traces.append(t)
+                else:
+                    other_traces.append(t)
+            else:
+                other_traces.append(t)
+
+        def render_col_charts(trace_list):
+            for fname, col, x, y in trace_list:
+                fig_i = go.Figure()
+                fig_i.add_trace(go.Scatter(
+                    x=x, y=y, mode="lines", line=dict(width=1.5), showlegend=False,
+                ))
+                fig_i.add_vline(x=0, line_dash="dash", line_color="gray",
+                                 annotation_text="salto", annotation_position="top right")
+                fig_i.update_layout(
+                    title=dict(text=f"<b>{fname[:28]}</b> · {col}", font_size=12),
+                    xaxis=dict(title=x_label, range=[x_min, x_max]),
+                    yaxis_title="",
+                    height=230,
+                    margin=dict(t=42, b=38, l=55, r=10),
+                    hovermode="x",
+                    template="plotly_white",
+                )
+                st.plotly_chart(fig_i, use_container_width=True)
+
+        col_l5, col_knee = st.columns(2)
+        with col_l5:
+            st.markdown("#### 🟢 L5")
+            render_col_charts(l5_traces)
+        with col_knee:
+            st.markdown("#### 🟠 Joelho")
+            render_col_charts(knee_traces)
+        if other_traces:
+            st.markdown("#### Outros sinais")
+            render_col_charts(other_traces)
 
     elif plot_mode == "Todos no mesmo gráfico":
         fig = go.Figure()
