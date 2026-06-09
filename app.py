@@ -429,13 +429,15 @@ with st.sidebar:
             offsets = {kinem_ref: 0}
             msgs_sync = []
 
-            s_k    = try_numeric(proc[kinem_ref][l5_kinem_col]).abs()
+            # Sincronização usa SEMPRE dados sem filtro (proc_nofilter)
+            # para que o pico do salto não seja atenuado pelo lowpass
+            s_k    = try_numeric(proc_nofilter[kinem_ref][l5_kinem_col]).abs()
             peak_k = int(s_k.iloc[:janela_samp].idxmax())
             st.session_state.peak_ref = peak_k
             msgs_sync.append(f"**Kinem** — pico @ {peak_k} ({peak_k/fs_target:.2f} s)")
 
-            if l5_acc != NONE and l5_acc_col and l5_acc_col in proc.get(l5_acc, pd.DataFrame()).columns:
-                s = try_numeric(proc[l5_acc][l5_acc_col]).abs()
+            if l5_acc != NONE and l5_acc_col and l5_acc_col in proc_nofilter.get(l5_acc, pd.DataFrame()).columns:
+                s = try_numeric(proc_nofilter[l5_acc][l5_acc_col]).abs()
                 p = int(s.iloc[:janela_samp].idxmax())
                 off = peak_k - p
                 offsets[l5_acc] = off
@@ -444,8 +446,8 @@ with st.sidebar:
                     offsets[l5_gyr] = off
                     msgs_sync.append(f"**L5 GYR** — offset {off:+d} (= ACC)")
 
-            if knee_acc != NONE and knee_acc_col and knee_acc_col in proc.get(knee_acc, pd.DataFrame()).columns:
-                s = try_numeric(proc[knee_acc][knee_acc_col]).abs()
+            if knee_acc != NONE and knee_acc_col and knee_acc_col in proc_nofilter.get(knee_acc, pd.DataFrame()).columns:
+                s = try_numeric(proc_nofilter[knee_acc][knee_acc_col]).abs()
                 p = int(s.iloc[:janela_samp].idxmax())
                 off = peak_k - p
                 offsets[knee_acc] = off
