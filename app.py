@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from scipy import signal as sp_signal
+from scipy import interpolate
 import io
 
 st.set_page_config(page_title="Visualizador de Sinais", layout="wide")
@@ -47,7 +49,6 @@ def numeric_cols(df):
 
 
 def col_default(cols, keywords):
-    """Retorna o índice da primeira coluna cujo nome contém alguma keyword."""
     for kw in keywords:
         for i, c in enumerate(cols):
             if kw in str(c).lower():
@@ -55,22 +56,57 @@ def col_default(cols, keywords):
     return 0
 
 
+def resample_df(df, fs_orig, fs_target):
+    """Reamostra todas as colunas numéricas de fs_orig para fs_target."""
+    if fs_orig == fs_target:
+        return df
+    n_orig = len(df)
+    duration = n_orig / fs_orig
+    n_target = int(round(duration * fs_target))
+    t_orig   = np.linspace(0, duration, n_orig)
+    t_target = np.linspace(0, duration, n_target)
+    result = {}
+    for col in df.columns:
+        y = df[col].values
+        if np.issubdtype(y.dtype, np.number):
+            y = np.where(np.isnan(y), 0.0, y)
+            f = interpolate.interp1d(t_orig, y, kind="linear",
+                                     bounds_error=False, fill_value="extrapolate")
+            result[col] = f(t_target)
+        else:
+            result[col] = [np.nan] * n_target
+    return pd.DataFrame(result)
+
+
+def apply_detrend(df):
+    result = df.copy()
+    for col in numeric_cols(df):
+        result[col] = sp_signal.detrend(df[col].fillna(0).values)
+    return result
+
+
+def apply_lowpass(df, fs, cutoff_hz, order=4):
+    result = df.copy()
+    nyq = fs / 2.0
+    if cutoff_hz >= nyq:
+        return result
+    b, a = sp_signal.butter(order, cutoff_hz / nyq, btype="low")
+    for col in numeric_cols(df):
+        y = df[col].fillna(0).values
+        result[col] = sp_signal.filtfilt(b, a, y)
+    return result
+
+
 def get_aligned_data(files_data, offsets, peak_ref):
-    """
-    Corta todos os sinais para a janela comum e seta x=0 no pico do salto.
-    Retorna (aligned_dict, x_axis, msg) ou (None, None, msg_erro).
-    """
+    """Corta para janela comum e seta x=0 no pico."""
     common_start = int(max(offsets.get(f, 0) for f in files_data))
     common_end   = int(min(offsets.get(f, 0) + len(df) for f, df in files_data.items()))
-
     if common_start >= common_end:
-        return None, None, "Sem sobreposição após sincronização. Verifique os offsets."
-
+        return None, None, "Sem sobreposição após sincronização."
     aligned = {}
     for fname, df in files_data.items():
         s = offsets.get(fname, 0)
         aligned[fname] = df.iloc[int(common_start - s):int(common_end - s)].reset_index(drop=True)
-
     peak_in_window = int(peak_ref - common_start)
     x_axis = np.arange(common_end - common_start) - peak_in_window
     n = common_end - common_start
@@ -80,13 +116,14 @@ def get_aligned_data(files_data, offsets, peak_ref):
 # ──────────────────────────────────────────────
 # Session state
 # ──────────────────────────────────────────────
-defaults = {
-    "files_data": {},
-    "offsets": {},
-    "peak_ref": 0,
-    "show_preview": False,
-}
-for k, v in defaults.items():
+for k, v in [
+    ("files_data", {}),
+    ("proc_data", {}),       # dados pós pré-processamento
+    ("offsets", {}),
+    ("peak_ref", 0),
+    ("target_fs", 100),
+    ("show_preview", False),
+]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -112,13 +149,13 @@ with st.sidebar:
                 errors.append(f.name)
         if set(loaded.keys()) != set(st.session_state.files_data.keys()):
             st.session_state.files_data = loaded
-            st.session_state.offsets = {}
+            st.session_state.proc_data  = {}
+            st.session_state.offsets    = {}
         if errors:
             st.error(f"Não carregou: {', '.join(errors)}")
         st.success(f"{len(loaded)} arquivo(s) ✔")
 
 files_data = st.session_state.files_data
-
 if not files_data:
     st.info("👈 Carregue os arquivos na barra lateral para começar.")
     st.stop()
@@ -133,9 +170,9 @@ with st.sidebar:
     kinem_idx = next((i for i, n in enumerate(file_names) if "kinem" in n.lower()), 0)
     kinem_ref = st.selectbox("Arquivo Kinem", file_names, index=kinem_idx)
     kinem_num = numeric_cols(files_data[kinem_ref])
-    st.caption("As duas colunas são do mesmo arquivo — o pico do salto ocorre na mesma amostra para L5 e joelho.")
+    st.caption("As duas colunas são do mesmo arquivo — pico do salto ocorre na mesma amostra.")
     l5_kinem_col = st.selectbox(
-        "Coluna L5 vertical (referência de sync + verificação)",
+        "Coluna L5 vertical (referência sync)",
         kinem_num,
         index=col_default(kinem_num, ["l5 a(z)", "l5a(z)", "l5_az", "l5"]),
     )
@@ -150,16 +187,15 @@ with st.sidebar:
 # ──────────────────────────────────────────────
 with st.sidebar:
     st.header("3 · Grupo L5 (celular)")
-    st.caption("ACC e GYR já estão sincronizados entre si — só precisa alinhar o ACC com o Kinem.")
+    st.caption("ACC e GYR já saem sincronizados entre si pelo celular.")
 
     others = [n for n in file_names if n != kinem_ref]
 
-    def best_match(names, *keywords):
-        """Retorna índice (base 1 para incluir NONE) do melhor match."""
-        for kw_set in keywords:
+    def best_match(names, *kw_sets):
+        for kws in kw_sets:
             for i, n in enumerate(names):
-                if all(k in n.lower() for k in kw_set):
-                    return i + 1   # +1 por causa do NONE na posição 0
+                if all(k in n.lower() for k in kws):
+                    return i + 1
         return 0
 
     l5_acc = st.selectbox(
@@ -176,9 +212,8 @@ with st.sidebar:
             index=col_default(num, ["y"]),
             key="l5_acc_col",
         )
-
     l5_gyr = st.selectbox(
-        "GYR L5  ← recebe mesmo offset do ACC",
+        "GYR L5  ← offset = ACC",
         [NONE] + others,
         index=best_match(others, ("gyro", "l5"), ("gyr", "l5")),
     )
@@ -203,79 +238,122 @@ with st.sidebar:
             index=col_default(num, ["y"]),
             key="knee_acc_col",
         )
-
     knee_gyr = st.selectbox(
-        "GYR Joelho  ← recebe mesmo offset do ACC",
+        "GYR Joelho  ← offset = ACC",
         [NONE] + others,
         index=best_match(others, ("gyro", "joelho"), ("gyr", "knee"), ("gyro", "jo")),
     )
 
 # ──────────────────────────────────────────────
-# Sidebar — 5. Sincronizar
+# Sidebar — 5. Pré-processamento + Sync
 # ──────────────────────────────────────────────
 with st.sidebar:
+    st.header("5 · Pré-processamento & Sync")
+
+    st.markdown("**Frequências de aquisição (Hz)**")
+    c1, c2 = st.columns(2)
+    with c1:
+        fs_kinem  = st.number_input("Kinem", min_value=1, max_value=10000, value=200, step=10)
+    with c2:
+        fs_celular = st.number_input("Celular", min_value=1, max_value=10000, value=100, step=10)
+
+    fs_target = st.number_input(
+        "Freq. alvo após reamostragem (Hz)",
+        min_value=1, max_value=10000, value=100, step=10,
+        help="Todos os sinais serão reamostrados para esta frequência antes do sync.",
+    )
+
+    st.markdown("**Filtros opcionais**")
+    do_detrend = st.checkbox("Detrend (remover tendência linear)", value=False)
+    do_lowpass = st.checkbox("Filtro passa-baixa (Butterworth)", value=False)
+    if do_lowpass:
+        cutoff_hz = st.number_input(
+            "Frequência de corte (Hz)",
+            min_value=0.1, max_value=float(fs_target // 2),
+            value=min(20.0, float(fs_target // 2 - 1)),
+            step=0.5,
+        )
+        filt_order = st.selectbox("Ordem do filtro", [2, 4, 6, 8], index=1)
+    else:
+        cutoff_hz  = 20.0
+        filt_order = 4
+
     st.divider()
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button("👁 Preview bruto"):
-            st.session_state.show_preview = not st.session_state.show_preview
-    with col_b:
-        janela = st.number_input(
-            "Janela (amostras)",
-            min_value=100, max_value=500_000, value=5000, step=100,
-            help="Número de amostras iniciais onde procurar o pico do salto.",
-        )
+    if st.button("👁 Preview sinais brutos"):
+        st.session_state.show_preview = not st.session_state.show_preview
 
-    if st.button("🔄 Sincronizar por pico de salto", type="primary", use_container_width=True):
-        offsets = {kinem_ref: 0}
-        msgs = []
+    janela_seg = st.number_input(
+        "Buscar pico nos primeiros X segundos",
+        min_value=0.1, max_value=300.0, value=5.0, step=0.5,
+        help="Após reamostrar, busca o pico neste intervalo inicial.",
+    )
 
-        # Pico de referência no Kinem
-        s_k = try_numeric(files_data[kinem_ref][l5_kinem_col]).abs()
-        peak_k = int(s_k.iloc[:janela].idxmax())
-        st.session_state.peak_ref = peak_k
-        msgs.append(f"**Kinem** — pico @ amostra {peak_k}")
+    if st.button("⚙️ Pré-processar e Sincronizar", type="primary", use_container_width=True):
+        with st.spinner("Reamostando e processando…"):
 
-        # Grupo L5
-        if l5_acc != NONE and l5_acc_col:
-            s = try_numeric(files_data[l5_acc][l5_acc_col]).abs()
-            p = int(s.iloc[:janela].idxmax())
-            off = peak_k - p
-            offsets[l5_acc] = off
-            msgs.append(f"**L5 ACC** — pico @ {p} → offset {off:+d}")
-            if l5_gyr != NONE:
-                offsets[l5_gyr] = off
-                msgs.append(f"**L5 GYR** — offset {off:+d} (= ACC)")
+            fs_map = {kinem_ref: fs_kinem}
+            for fname in others:
+                fs_map[fname] = fs_celular
 
-        # Grupo Joelho
-        if knee_acc != NONE and knee_acc_col:
-            s = try_numeric(files_data[knee_acc][knee_acc_col]).abs()
-            p = int(s.iloc[:janela].idxmax())
-            off = peak_k - p
-            offsets[knee_acc] = off
-            msgs.append(f"**Joelho ACC** — pico @ {p} → offset {off:+d}")
-            if knee_gyr != NONE:
-                offsets[knee_gyr] = off
-                msgs.append(f"**Joelho GYR** — offset {off:+d} (= ACC)")
+            # 1. Reamostrar para fs_target
+            proc = {}
+            for fname, df in files_data.items():
+                r = resample_df(df, fs_map[fname], fs_target)
+                # 2. Detrend
+                if do_detrend:
+                    r = apply_detrend(r)
+                # 3. Filtro passa-baixa
+                if do_lowpass:
+                    r = apply_lowpass(r, fs_target, cutoff_hz, filt_order)
+                proc[fname] = r
 
-        # Arquivos não atribuídos a nenhum grupo ficam com offset=0
-        for fname in file_names:
-            if fname not in offsets:
-                offsets[fname] = 0
-                msgs.append(f"**{fname[:30]}** — sem grupo, offset 0")
+            st.session_state.proc_data  = proc
+            st.session_state.target_fs  = fs_target
 
-        st.session_state.offsets = offsets
-        for m in msgs:
-            st.write(m)
+            # 4. Sincronizar por pico (agora todos no mesmo fs_target)
+            janela_samp = int(janela_seg * fs_target)
+            offsets = {kinem_ref: 0}
+            msgs = []
+
+            s_k = try_numeric(proc[kinem_ref][l5_kinem_col]).abs()
+            peak_k = int(s_k.iloc[:janela_samp].idxmax())
+            st.session_state.peak_ref = peak_k
+            msgs.append(f"**Kinem** — pico @ amostra {peak_k} ({peak_k/fs_target:.2f} s)")
+
+            if l5_acc != NONE and l5_acc_col:
+                s = try_numeric(proc[l5_acc][l5_acc_col]).abs()
+                p = int(s.iloc[:janela_samp].idxmax())
+                off = peak_k - p
+                offsets[l5_acc] = off
+                msgs.append(f"**L5 ACC** — pico @ {p} ({p/fs_target:.2f} s) → offset {off:+d}")
+                if l5_gyr != NONE:
+                    offsets[l5_gyr] = off
+                    msgs.append(f"**L5 GYR** — offset {off:+d} (= ACC)")
+
+            if knee_acc != NONE and knee_acc_col:
+                s = try_numeric(proc[knee_acc][knee_acc_col]).abs()
+                p = int(s.iloc[:janela_samp].idxmax())
+                off = peak_k - p
+                offsets[knee_acc] = off
+                msgs.append(f"**Joelho ACC** — pico @ {p} ({p/fs_target:.2f} s) → offset {off:+d}")
+                if knee_gyr != NONE:
+                    offsets[knee_gyr] = off
+                    msgs.append(f"**Joelho GYR** — offset {off:+d} (= ACC)")
+
+            for fname in file_names:
+                if fname not in offsets:
+                    offsets[fname] = 0
+
+            st.session_state.offsets = offsets
+            for m in msgs:
+                st.write(m)
 
 # ──────────────────────────────────────────────
-# Preview bruto (sem sync)
+# Preview bruto
 # ──────────────────────────────────────────────
 if st.session_state.show_preview:
-    st.subheader("👁 Sinais brutos — sem sincronização")
-    st.caption("Use para confirmar onde está o pico do salto e ajustar a janela de busca.")
-
+    st.subheader("👁 Sinais brutos — sem pré-processamento")
     sync_cols = [(kinem_ref, l5_kinem_col)]
     if l5_acc != NONE and l5_acc_col:
         sync_cols.append((l5_acc, l5_acc_col))
@@ -283,46 +361,47 @@ if st.session_state.show_preview:
         sync_cols.append((knee_acc, knee_acc_col))
 
     n_prev = len(sync_cols)
-    fig_prev = make_subplots(
+    fig_p = make_subplots(
         rows=n_prev, cols=1, shared_xaxes=False,
         subplot_titles=[f"{fn} · {c}" for fn, c in sync_cols],
         vertical_spacing=0.08,
     )
     for row, (fname, col) in enumerate(sync_cols, start=1):
         y = try_numeric(files_data[fname][col])
-        fig_prev.add_trace(
+        fig_p.add_trace(
             go.Scatter(x=np.arange(len(y)), y=y, mode="lines", showlegend=False),
             row=row, col=1,
         )
-    fig_prev.update_layout(
+    fig_p.update_layout(
         height=280 * n_prev, template="plotly_white",
-        title="Colunas de sincronização — posição original",
+        title="Colunas de sync — amostras originais (frequências diferentes!)",
         hovermode="x unified",
     )
-    st.plotly_chart(fig_prev, use_container_width=True)
+    st.plotly_chart(fig_p, use_container_width=True)
     st.divider()
 
 # ──────────────────────────────────────────────
-# Seleção de colunas por arquivo
+# Seleção de colunas
 # ──────────────────────────────────────────────
+# Usa proc_data se disponível, senão files_data
+display_data = st.session_state.proc_data if st.session_state.proc_data else files_data
+target_fs    = st.session_state.target_fs
+
 st.subheader("Seleção de colunas por arquivo")
-
 col_selections = {}
-grid = st.columns(min(len(files_data), 3))
+grid = st.columns(min(len(display_data), 3))
 
-for i, (fname, df) in enumerate(files_data.items()):
+for i, (fname, df) in enumerate(display_data.items()):
     num = numeric_cols(df)
     with grid[i % 3]:
         off = st.session_state.offsets.get(fname, 0)
         grp = ""
-        if fname == kinem_ref:
-            grp = " 🔵 Kinem"
-        elif fname in (l5_acc, l5_gyr):
-            grp = " 🟢 L5"
-        elif fname in (knee_acc, knee_gyr):
-            grp = " 🟠 Joelho"
+        if fname == kinem_ref:          grp = " 🔵 Kinem"
+        elif fname in (l5_acc, l5_gyr): grp = " 🟢 L5"
+        elif fname in (knee_acc, knee_gyr): grp = " 🟠 Joelho"
         st.markdown(f"**{fname}**{grp}")
-        st.caption(f"offset: {off:+d} amostras")
+        proc_label = "pré-proc ✔" if st.session_state.proc_data else "bruto"
+        st.caption(f"offset: {off:+d} amostras | {proc_label} @ {target_fs} Hz")
         sel = st.multiselect(
             label=f"cols_{fname}",
             options=num,
@@ -342,22 +421,31 @@ plot_mode = st.radio(
     horizontal=True,
 )
 
+x_unit = st.radio("Eixo x", ["Amostras", "Segundos"], horizontal=True)
+
 if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_width=True):
 
-    aligned_data, x_axis, align_msg = get_aligned_data(
-        files_data, st.session_state.offsets, st.session_state.peak_ref
-    )
+    if not st.session_state.proc_data:
+        st.warning("Clique em **⚙️ Pré-processar e Sincronizar** antes de plotar.")
+        st.stop()
 
+    aligned_data, x_samp, align_msg = get_aligned_data(
+        st.session_state.proc_data,
+        st.session_state.offsets,
+        st.session_state.peak_ref,
+    )
     if aligned_data is None:
         st.error(align_msg)
         st.stop()
 
     st.info(align_msg)
 
+    x_axis  = x_samp / target_fs if x_unit == "Segundos" else x_samp
+    x_label = "Tempo (s) — 0 = pico do salto" if x_unit == "Segundos" else "Amostra (0 = pico do salto)"
+
     traces = []
     for fname, df in aligned_data.items():
-        selected = col_selections.get(fname, [])
-        for col in selected:
+        for col in col_selections.get(fname, []):
             if col in df.columns:
                 traces.append((fname, col, x_axis, try_numeric(df[col])))
 
@@ -368,14 +456,13 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
         fig = go.Figure()
         for fname, col, x, y in traces:
             fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=f"{fname} · {col}"))
+        fig.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="salto")
         fig.update_layout(
             title="Sinais Sincronizados",
-            xaxis_title="Amostra (0 = pico do salto)",
-            yaxis_title="Valor",
+            xaxis_title=x_label, yaxis_title="Valor",
             height=600, hovermode="x unified", template="plotly_white",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         )
-        fig.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="salto")
         st.plotly_chart(fig, use_container_width=True)
 
     else:
@@ -396,7 +483,7 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
             height=220 * n, hovermode="x unified",
             template="plotly_white", title="Sinais Sincronizados",
         )
-        fig.update_xaxes(title_text="Amostra (0 = pico do salto)", row=n, col=1)
+        fig.update_xaxes(title_text=x_label, row=n, col=1)
         st.plotly_chart(fig, use_container_width=True)
 
     # ── Verificação L5 ──────────────────────────────────────────
@@ -411,12 +498,14 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
         with st.expander("🔍 Verificação — alinhamento L5"):
             fig_v = go.Figure()
             for fname, col, label in l5_check:
-                y = try_numeric(aligned_data[fname][col])
-                fig_v.add_trace(go.Scatter(x=x_axis, y=y, mode="lines", name=label))
+                fig_v.add_trace(go.Scatter(
+                    x=x_axis, y=try_numeric(aligned_data[fname][col]),
+                    mode="lines", name=label,
+                ))
             fig_v.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="salto")
             fig_v.update_layout(
-                title="L5 — Kinem vs ACC (alinhados)",
-                xaxis_title="Amostra (0 = pico)", hovermode="x unified",
+                title="L5 — Kinem vs ACC (alinhados, mesma fs)",
+                xaxis_title=x_label, hovermode="x unified",
                 template="plotly_white", height=380,
             )
             st.plotly_chart(fig_v, use_container_width=True)
@@ -433,12 +522,14 @@ if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_w
         with st.expander("🔍 Verificação — alinhamento Joelho"):
             fig_k = go.Figure()
             for fname, col, label in knee_check:
-                y = try_numeric(aligned_data[fname][col])
-                fig_k.add_trace(go.Scatter(x=x_axis, y=y, mode="lines", name=label))
+                fig_k.add_trace(go.Scatter(
+                    x=x_axis, y=try_numeric(aligned_data[fname][col]),
+                    mode="lines", name=label,
+                ))
             fig_k.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="salto")
             fig_k.update_layout(
-                title="Joelho — Kinem vs ACC (alinhados)",
-                xaxis_title="Amostra (0 = pico)", hovermode="x unified",
+                title="Joelho — Kinem vs ACC (alinhados, mesma fs)",
+                xaxis_title=x_label, hovermode="x unified",
                 template="plotly_white", height=380,
             )
             st.plotly_chart(fig_k, use_container_width=True)
