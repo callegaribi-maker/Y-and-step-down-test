@@ -583,28 +583,47 @@ with vc2:
 
 x_label = ("Tempo (s)  —  0 = pico do salto" if x_unit == "Segundos" else "Amostra  —  0 = pico do salto")
 
-# ── Colunas Kinem para qualidade ───────────────────────────────
-with st.expander("⚙️ Colunas Kinem no check de qualidade"):
-    st.caption("Escolha quais colunas do Kinem mostrar — prefira deslocamento (d) ou posição (p) em vez de aceleração (a).")
+# ── Colunas para check de qualidade ───────────────────────────
+with st.expander("⚙️ Colunas para check de qualidade (1 por fonte)"):
+    st.caption("Escolha exatamente qual coluna usar de cada fonte. Os 4 sinais serão plotados sobrepostos (z-score).")
     qk1, qk2 = st.columns(2)
+
+    # ---- Kinem ----
     with qk1:
         qa_kinem_l5_col = st.selectbox(
-            "L5 — coluna Kinem", kinem_num, key="qa_kl5",
+            "🔵 Kinem — L5", kinem_num, key="qa_kl5",
             index=col_default(kinem_num, [
                 "l 5 d(z)", "l5 d(z)", "l 5 d(y)", "l5 d(y)",
-                "l 5 p(z)", "l5 p(z)", "l 5 p(y)", "l5 p(y)",
+                "l 5 p(z)", "l5 p(z)", "l 5 v(z)", "l5 v(z)",
                 "l 5 a(z)", "l5 a(z)", "l 5 z", "l5",
             ]),
         )
     with qk2:
         qa_kinem_knee_col = st.selectbox(
-            "Joelho — coluna Kinem", kinem_num, key="qa_kknee",
+            "🔵 Kinem — Joelho", kinem_num, key="qa_kknee",
             index=col_default(kinem_num, [
                 "condilo d(z)", "condilo d(y)", "condilo p(z)", "condilo p(y)",
-                "condilo a(z)", "condilo a(z)", "condilo",
+                "condilo v(z)", "condilo a(z)", "condilo",
                 "joelho d", "joelho p", "joelho a(z)",
             ]),
         )
+
+    # ---- Celular L5 ----
+    l5_acc_num  = numeric_cols(display_data.get(l5_acc,  pd.DataFrame())) if l5_acc  != NONE else []
+    knee_acc_num = numeric_cols(display_data.get(knee_acc, pd.DataFrame())) if knee_acc != NONE else []
+
+    with qk1:
+        qa_phone_l5_col = st.selectbox(
+            "🟢 Celular — L5", l5_acc_num if l5_acc_num else ["—"],
+            key="qa_pl5",
+            index=col_default(l5_acc_num, ["z", "y", "x"]) if l5_acc_num else 0,
+        ) if l5_acc_num else None
+    with qk2:
+        qa_phone_knee_col = st.selectbox(
+            "🟠 Celular — Joelho", knee_acc_num if knee_acc_num else ["—"],
+            key="qa_pknee",
+            index=col_default(knee_acc_num, ["z", "y", "x"]) if knee_acc_num else 0,
+        ) if knee_acc_num else None
 
 # ── Checar qualidade dos dados ─────────────────────────────────
 if st.button("🔍 Checar qualidade dos dados", use_container_width=True):
@@ -628,50 +647,30 @@ if st.button("🔍 Checar qualidade dos dados", use_container_width=True):
     mask = (qa_x >= qa_xmin) & (qa_x <= qa_xmax)
     x_view = qa_x[mask]
 
-    def get_kinem_entry(col_name):
-        """Retorna entry (std, label, y_view) para uma coluna específica do Kinem."""
-        df = qa_aligned.get(kinem_ref)
-        if df is None or col_name not in df.columns:
+    def get_entry(fname, col_name):
+        """Retorna (std, label, y_view) para fname+coluna, ou None se indisponível."""
+        df = qa_aligned.get(fname)
+        if df is None or col_name is None or col_name not in df.columns:
             return None
         y = try_numeric(df[col_name]).values[mask].astype(float)
         if np.all(np.isnan(y)):
             return None
-        dcol = display_col_name(kinem_ref, col_name, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
-        return (float(np.nanstd(y)), f"{kinem_ref[:22]} · {dcol}", y)
+        dcol = display_col_name(fname, col_name, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
+        return (float(np.nanstd(y)), f"{fname[:22]} · {dcol}", y)
 
-    # Kinem fixo (coluna escolhida pelo usuário) + top 2 celulares por variância
-    l5_phone_sigs, joelho_phone_sigs = [], []
-    for fname, df in qa_aligned.items():
-        if fname == kinem_ref:
-            continue
-        for col in df.columns:
-            y = try_numeric(df[col])
-            if y.isna().all():
-                continue
-            y_view = y.values[mask].astype(float)
-            if np.all(np.isnan(y_view)):
-                continue
-            std = float(np.nanstd(y_view))
-            cat = classify_trace(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
-            dcol = display_col_name(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
-            entry = (std, f"{fname[:22]} · {dcol}", y_view)
-            if cat == "l5":
-                l5_phone_sigs.append(entry)
-            elif cat == "joelho":
-                joelho_phone_sigs.append(entry)
+    # Monta os 4 sinais: 1 Kinem L5 + 1 celular L5 + 1 Kinem Joelho + 1 celular Joelho
+    e_kl5   = get_entry(kinem_ref, qa_kinem_l5_col)
+    e_pl5   = get_entry(l5_acc if l5_acc != NONE else "", qa_phone_l5_col)
+    e_kknee = get_entry(kinem_ref, qa_kinem_knee_col)
+    e_pknee = get_entry(knee_acc if knee_acc != NONE else "", qa_phone_knee_col)
 
-    def build_top3_fixed(kinem_col, phone_sigs):
-        kinem_entry = get_kinem_entry(kinem_col)
-        phone_pick  = sorted(phone_sigs, key=lambda e: e[0], reverse=True)[:2]
-        return ([kinem_entry] if kinem_entry else []) + phone_pick
-
-    l5_top     = build_top3_fixed(qa_kinem_l5_col,   l5_phone_sigs)
-    joelho_top = build_top3_fixed(qa_kinem_knee_col, joelho_phone_sigs)
+    l5_top     = [e for e in [e_kl5,   e_pl5]   if e]
+    joelho_top = [e for e in [e_kknee, e_pknee] if e]
 
     qa_c1, qa_c2 = st.columns(2)
     for col_out, group, title in [
-        (qa_c1, l5_top,     "🟢 L5 — top 3 variação"),
-        (qa_c2, joelho_top, "🟠 Joelho — top 3 variação"),
+        (qa_c1, l5_top,     "🟢 L5 — Kinem vs Celular"),
+        (qa_c2, joelho_top, "🟠 Joelho — Kinem vs Celular"),
     ]:
         with col_out:
             st.markdown(f"#### {title}")
