@@ -120,9 +120,11 @@ def is_xyz_col(col):
 def kinem_cols_for_body(df, *body_keywords):
     """
     Retorna colunas do Kinem para uma região anatômica.
-    Inclui qualquer coluna com eixo (X), (Y) ou (Z).
-    Exclui colunas de comprimento/magnitude (contêm 'abs', 'length', ou terminam em 'l(').
-    Aceita múltiplos keywords (ex: "l5", "l 5").
+    Inclui colunas cujo nome:
+      - contém algum body_keyword
+      - termina em X, Y ou Z  (ex: L5X, CôndilolateralX)
+      - OU contém (X), (Y) ou (Z)  (ex: L5 v(Z), L5 a(Y))
+    Exclui: abs, length, #2D e colunas terminadas em 'length' / 'abs'.
     """
     import re
     result = []
@@ -130,11 +132,13 @@ def kinem_cols_for_body(df, *body_keywords):
         cn = norm(col).lower()
         if not any(kw in cn for kw in body_keywords):
             continue
-        # exclui comprimento e valores absolutos
-        if "abs" in cn or "length" in cn or re.search(r'\bl\(', cn):
+        # exclui comprimento, valores absolutos e métricas 2D
+        if "abs" in cn or "length" in cn or "#2d" in cn or re.search(r'\bl\b', cn):
             continue
-        # inclui qualquer eixo X, Y ou Z  (ex: a(Z), v(Y), d(X), p(Z), s(X))
-        if any(f"({ax})" in cn for ax in ("x", "y", "z")):
+        # inclui se tem eixo com parênteses ou se termina em x/y/z
+        has_paren_axis  = any(f"({ax})" in cn for ax in ("x", "y", "z"))
+        has_suffix_axis = bool(re.search(r'[xyz]$', cn))
+        if has_paren_axis or has_suffix_axis:
             result.append(col)
     return result
 
