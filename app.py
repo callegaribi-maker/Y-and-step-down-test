@@ -122,14 +122,14 @@ def kinem_cols_for_body(df, *body_keywords):
     Retorna colunas do Kinem para uma região anatômica.
     Inclui colunas cujo nome:
       - contém algum body_keyword
-      - termina em X, Y ou Z  (ex: L5X, CôndilolateralX)
+      - termina em X, Y ou Z  (ex: L5X, L5 X)
       - OU contém (X), (Y) ou (Z)  (ex: L5 v(Z), L5 a(Y))
-    Exclui: abs, length, #2D e colunas terminadas em 'length' / 'abs'.
+    Exclui: abs, length, #2D e colunas de comprimento l(Z).
     """
     import re
     result = []
     for col in df.columns:
-        cn = norm(col).lower()
+        cn = norm(col).lower().strip()
         if not any(kw in cn for kw in body_keywords):
             continue
         # exclui comprimento, valores absolutos e métricas 2D
@@ -145,8 +145,7 @@ def kinem_cols_for_body(df, *body_keywords):
 
 def build_export_sheet(aligned, kinem_ref, acc_file, gyr_file,
                        kinem_keywords, t, fs, NONE="— nenhum —"):
-    """Monta DataFrame de uma aba do Excel (L5 ou Joelho).
-    kinem_keywords: lista de strings para filtrar colunas do Kinem."""
+    """Monta DataFrame de uma aba do Excel (L5 ou Joelho)."""
     dfs = [pd.DataFrame({"Tempo (s)": t})]
 
     # Kinem
@@ -170,7 +169,6 @@ def build_export_sheet(aligned, kinem_ref, acc_file, gyr_file,
             dfs.append(gdf[cols].add_prefix("GYR_").reset_index(drop=True))
 
     result = pd.concat(dfs, axis=1)
-    # Alinha comprimento (pode variar por padding)
     result = result.iloc[:len(t)]
     return result
 
@@ -218,11 +216,10 @@ def resample_to_regular(df, fs_target):
     t, time_col = detect_time_axis(df)
 
     if t is None:
-        # Sem coluna de tempo — não é possível reamostrar corretamente
         return df, None, "sem coluna de tempo (não reamostrado)"
 
     data_cols = [c for c in df.columns if c != time_col]
-    t_norm    = t - t[0]          # normaliza para começar em 0
+    t_norm    = t - t[0]
     duration  = t_norm[-1]
     fs_orig   = (len(t) - 1) / duration if duration > 0 else fs_target
 
@@ -251,11 +248,6 @@ def apply_detrend(df):
 
 
 def _impact_envelope(v, fs=100.0):
-    """
-    Envelope para detecção de pico de impacto.
-    Highpass 1 Hz: remove DC/drift lento, preserva pico agudo do impacto.
-    Funciona independente de orientação de eixo.
-    """
     v = np.asarray(v, dtype=float)
     if len(v) < 12:
         return np.abs(v - np.mean(v))
@@ -281,11 +273,7 @@ def find_highest_peak(series, search_end, fs=100.0):
 
 
 def _local_corr(kinem_vals, phone_vals, kinem_peak, phone_peak, fs):
-    """
-    Correlação de Pearson entre os envelopes num janela de ±1 s
-    ao redor dos picos correspondentes. Retorna valor em [0, 1].
-    """
-    win = int(fs)   # ±1 s
+    win = int(fs)
     k_v = kinem_vals
     p_v = phone_vals
     ks  = max(0, kinem_peak - win);  ke = min(len(k_v), kinem_peak + win)
@@ -302,19 +290,11 @@ def _local_corr(kinem_vals, phone_vals, kinem_peak, phone_peak, fs):
 
 
 def find_sync_xcorr(kinem_ser, phone_ser, kinem_peak, search_end, fs):
-    """
-    Gera dois candidatos para o pico de impacto no phone:
-      - p_simple: pico de maior amplitude no sinal completo (highpass)
-      - p_xcorr:  pico encontrado por correlação cruzada de envelopes
-    Escolhe o candidato com maior correlação local com o Kinem no instante do impacto.
-    """
     k_vals = try_numeric(kinem_ser).fillna(0).values.astype(float)
     p_vals = try_numeric(phone_ser).fillna(0).values[:search_end].astype(float)
 
-    # Candidato 1 — pico global highpass
     p_simple = find_highest_peak(pd.Series(p_vals), len(p_vals), fs)
 
-    # Candidato 2 — xcorr
     half_tpl = int(2 * fs)
     k_start  = max(0, kinem_peak - half_tpl)
     k_end    = min(len(k_vals), kinem_peak + half_tpl)
@@ -333,7 +313,6 @@ def find_sync_xcorr(kinem_ser, phone_ser, kinem_peak, search_end, fs):
     if p_xcorr is None:
         return p_simple
 
-    # Escolhe o candidato com maior correlação local
     c_simple = _local_corr(k_vals, p_vals, kinem_peak, p_simple, fs)
     c_xcorr  = _local_corr(k_vals, p_vals, kinem_peak, p_xcorr,  fs)
 
@@ -345,7 +324,6 @@ def apply_lowpass(df, fs, cutoff_hz, order=4):
     nyq = fs / 2.0
     if cutoff_hz >= nyq:
         return result
-    # sosfiltfilt é numericamente estável mesmo para cutoff muito baixo
     sos = sp_signal.butter(order, cutoff_hz / nyq, btype="low", output="sos")
     for col in numeric_cols(df):
         y = df[col].fillna(0).values
@@ -356,12 +334,11 @@ def apply_lowpass(df, fs, cutoff_hz, order=4):
 
 def get_aligned_data(files_data, offsets, peak_ref, ref_file=None):
     """
-    Alinha todos os arquivos usando ref_file (ex: Kinem) como comprimento de referência.
-    Arquivos mais curtos são preenchidos com NaN — aparecem como lacunas no gráfico.
+    Alinha todos os arquivos usando ref_file como comprimento de referência.
+    Arquivos mais curtos são preenchidos com NaN.
     """
     common_start = int(max(offsets.get(f, 0) for f in files_data))
 
-    # Usa ref_file para definir o fim da janela; senão, usa o mínimo comum
     if ref_file and ref_file in files_data:
         common_end = int(offsets.get(ref_file, 0) + len(files_data[ref_file]))
     else:
@@ -376,16 +353,16 @@ def get_aligned_data(files_data, offsets, peak_ref, ref_file=None):
 
     for fname, df in files_data.items():
         s        = offsets.get(fname, 0)
-        i_start  = int(common_start - s)          # índice de início no df original
-        i_end    = int(common_end   - s)           # índice de fim   no df original
+        i_start  = int(common_start - s)
+        i_end    = int(common_end   - s)
         a_start  = max(0, i_start)
         a_end    = min(len(df), i_end)
 
         num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
         chunk    = df.iloc[a_start:a_end][num_cols].reset_index(drop=True)
 
-        pad_before = a_start - i_start             # amostras em falta no início
-        pad_after  = n - pad_before - len(chunk)   # amostras em falta no fim
+        pad_before = a_start - i_start
+        pad_after  = n - pad_before - len(chunk)
 
         if pad_before > 0 or pad_after > 0:
             short_files.append(f"{fname} (faltam {max(0,pad_after)} amostras no fim)")
@@ -413,15 +390,15 @@ def get_aligned_data(files_data, offsets, peak_ref, ref_file=None):
 # ──────────────────────────────────────────────
 for k, v in [
     ("files_data",          {}),
-    ("raw_synced",          {}),   # reamostrado, sem detrend/filtro
-    ("proc_data",           {}),   # reamostrado + detrend + filtro
-    ("proc_data_nofilter",  {}),   # reamostrado + detrend, sem filtro
+    ("raw_synced",          {}),
+    ("proc_data",           {}),
+    ("proc_data_nofilter",  {}),
     ("offsets",             {}),
     ("peak_ref",            None),
     ("target_fs",           100),
     ("fs_info",             {}),
     ("show_preview",        False),
-    ("synced",              False), # controla se sync foi feito
+    ("synced",              False),
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -528,7 +505,7 @@ with st.sidebar:
                              index=best_match(others, ("gyro", "joelho"), ("gyr", "knee"), ("gyro", "jo")))
 
 # ──────────────────────────────────────────────
-# Sidebar — 5. Sincronização (oculto por padrão)
+# Sidebar — Configurações avançadas de sincronização
 # ──────────────────────────────────────────────
 with st.sidebar:
     with st.expander("⚙️ Configurações avançadas de sincronização", expanded=False):
@@ -539,40 +516,7 @@ with st.sidebar:
         )
 
 # ──────────────────────────────────────────────
-# Sidebar — 5. Processamento
-# ──────────────────────────────────────────────
-with st.sidebar:
-    st.header("5 · Processamento")
-    do_detrend = st.checkbox("Detrend (remover tendência linear)", value=True)
-    do_lowpass = st.checkbox("Filtro passa-baixa (Butterworth)", value=True)
-    if do_lowpass:
-        cutoff_hz  = st.number_input("Frequência de corte (Hz)",
-                                      min_value=0.1, max_value=float(fs_target // 2),
-                                      value=min(20.0, float(fs_target // 2 - 1)), step=0.5)
-        filt_order = st.selectbox("Ordem do filtro", [2, 4, 6, 8], index=1)
-    else:
-        cutoff_hz, filt_order = 20.0, 4
-
-    if st.session_state.synced:
-        if st.button("🔧 Processar", type="primary", use_container_width=True):
-            raw = st.session_state.raw_synced
-            proc, proc_nofilter = {}, {}
-            for fname, df in raw.items():
-                r = df.copy()
-                if do_detrend:
-                    r = apply_detrend(r)
-                proc_nofilter[fname] = r.copy()
-                if do_lowpass:
-                    r = apply_lowpass(r, fs_target, cutoff_hz, filt_order)
-                proc[fname] = r
-            st.session_state.proc_data          = proc
-            st.session_state.proc_data_nofilter = proc_nofilter
-            st.success("✔ Processamento aplicado.")
-    else:
-        st.caption("⬆ Sincronize primeiro.")
-
-# ──────────────────────────────────────────────
-# Botões: Preview + Sincronizar (lado a lado)
+# Botões: Preview + Sincronizar
 # ──────────────────────────────────────────────
 btn_col1, btn_col2, btn_col3 = st.columns([2, 1, 2])
 with btn_col1:
@@ -599,7 +543,6 @@ with btn_col3:
             st.session_state.raw_synced = raw_synced
             st.session_state.target_fs  = fs_target
             st.session_state.fs_info    = fs_info
-            # Limpa proc para forçar re-processar
             st.session_state.proc_data          = {}
             st.session_state.proc_data_nofilter = {}
 
@@ -607,16 +550,13 @@ with btn_col3:
             offsets     = {kinem_ref: 0}
             msgs_sync   = []
 
-            # ── Referência L5: pico do Kinem L5 a(Z) → define x=0 global ──
             s_k_l5 = try_numeric(raw_synced[kinem_ref][l5_kinem_col])
             peak_k = find_highest_peak(s_k_l5, janela_samp, fs_target)
-            st.session_state.peak_ref     = peak_k
-            st.session_state.synced       = True
+            st.session_state.peak_ref = peak_k
+            st.session_state.synced   = True
             st.session_state.show_preview = False
             msgs_sync.append(f"**Kinem L5** — pico @ {peak_k} ({peak_k/fs_target:.2f} s) → x=0")
 
-            # ── Referência Joelho: pico do Côndilo a(Z) ──
-            # Busca dentro de ±1 s ao redor do peak_k para garantir mesmo evento
             win = int(1.0 * fs_target)
             s_k_knee  = try_numeric(raw_synced[kinem_ref][knee_kinem_col])
             k_start   = max(0, peak_k - win)
@@ -624,7 +564,6 @@ with btn_col3:
             peak_knee = find_highest_peak(s_k_knee.iloc[k_start:k_end].reset_index(drop=True), k_end - k_start, fs_target) + k_start
             msgs_sync.append(f"**Kinem Joelho (Côndilo)** — pico @ {peak_knee} ({peak_knee/fs_target:.2f} s) → Δ {(peak_knee-peak_k)/fs_target:+.3f} s")
 
-            # ── L5 ACC sincroniza com pico do Kinem L5 (xcorr) ──
             if l5_acc != NONE and l5_acc_col and l5_acc_col in raw_synced.get(l5_acc, pd.DataFrame()).columns:
                 p = find_sync_xcorr(
                     raw_synced[kinem_ref][l5_kinem_col],
@@ -637,7 +576,6 @@ with btn_col3:
                     offsets[l5_gyr] = peak_k - p
                     msgs_sync.append(f"**L5 GYR** — offset {peak_k-p:+d} (= ACC L5)")
 
-            # ── Joelho ACC sincroniza com pico do Côndilo (xcorr) ──
             if knee_acc != NONE and knee_acc_col and knee_acc_col in raw_synced.get(knee_acc, pd.DataFrame()).columns:
                 p = find_sync_xcorr(
                     raw_synced[kinem_ref][knee_kinem_col],
@@ -699,7 +637,7 @@ if st.session_state.show_preview:
     st.divider()
 
 # ──────────────────────────────────────────────
-# Verificação de alinhamento (abaixo do preview bruto)
+# Verificação de alinhamento
 # ──────────────────────────────────────────────
 if st.session_state.synced and st.session_state.raw_synced and st.session_state.peak_ref is not None:
     _vfs = st.session_state.target_fs or 100
@@ -761,215 +699,290 @@ if st.session_state.synced and st.session_state.raw_synced and st.session_state.
     _render_verif("L5",     l5_kinem_col,   l5_acc,   l5_acc_col,   "Kinem L5",     "ACC L5")
     _render_verif("Joelho", knee_kinem_col, knee_acc, knee_acc_col, "Kinem Joelho", "ACC Joelho")
 
-    if not st.session_state.proc_data:
-        st.success("### ✅ Sincronização concluída!\nVerifique os gráficos acima. Se estiver OK, ajuste os filtros na **seção 5 à esquerda** e clique em **🔧 Processar** para prosseguir.")
+    # ──────────────────────────────────────────────
+    # Processamento inline
+    # ──────────────────────────────────────────────
     st.divider()
+    proc_done = bool(st.session_state.proc_data)
+    with st.expander(
+        "⚙️ Processamento  ✔ Aplicado" if proc_done else "⚙️ Processamento  ← Configure e processe aqui",
+        expanded=not proc_done,
+    ):
+        pc1, pc2 = st.columns(2)
+        with pc1:
+            do_detrend = st.checkbox("Detrend (remover tendência linear)", value=True, key="do_detrend")
+        with pc2:
+            do_lowpass = st.checkbox("Filtro passa-baixa (Butterworth)", value=True, key="do_lowpass")
+
+        if do_lowpass:
+            fl1, fl2 = st.columns(2)
+            with fl1:
+                cutoff_hz = st.number_input(
+                    "Frequência de corte (Hz)",
+                    min_value=0.1, max_value=float(fs_target // 2),
+                    value=min(20.0, float(fs_target // 2 - 1)), step=0.5,
+                    key="cutoff_hz",
+                )
+            with fl2:
+                filt_order = st.selectbox("Ordem do filtro", [2, 4, 6, 8], index=1, key="filt_order")
+        else:
+            cutoff_hz  = 20.0
+            filt_order = 4
+
+        if st.button("🔧 Processar", type="primary", use_container_width=True, key="btn_processar"):
+            raw = st.session_state.raw_synced
+            proc, proc_nofilter = {}, {}
+            for fname, df in raw.items():
+                r = df.copy()
+                if do_detrend:
+                    r = apply_detrend(r)
+                proc_nofilter[fname] = r.copy()
+                if do_lowpass:
+                    r = apply_lowpass(r, fs_target, cutoff_hz, filt_order)
+                proc[fname] = r
+            st.session_state.proc_data          = proc
+            st.session_state.proc_data_nofilter = proc_nofilter
+            st.rerun()
 
 # ──────────────────────────────────────────────
-# Seleção de colunas
+# Auto-visualização — todos os eixos X, Y, Z
 # ──────────────────────────────────────────────
-display_data = (st.session_state.proc_data
-                or st.session_state.raw_synced
-                or files_data)
-target_fs    = st.session_state.target_fs
-fs_info      = st.session_state.fs_info
+if st.session_state.proc_data and st.session_state.synced:
+    _pfs = st.session_state.target_fs or 100
 
-st.subheader("Seleção de colunas por arquivo")
-col_selections = {}
-grid = st.columns(min(len(display_data), 3))
-
-for i, (fname, df) in enumerate(display_data.items()):
-    num = numeric_cols(df)
-    with grid[i % 3]:
-        off  = st.session_state.offsets.get(fname, 0)
-        grp  = (" 🔵 Kinem" if fname == kinem_ref
-                else " 🟢 L5" if fname in (l5_acc, l5_gyr)
-                else " 🟠 Joelho" if fname in (knee_acc, knee_gyr)
-                else "")
-        fs_orig = fs_info.get(fname)
-        proc_label = (f"reamostrado de ~{fs_orig:.0f}→{target_fs} Hz"
-                      if fs_orig and st.session_state.proc_data else "bruto")
-        st.markdown(f"**{fname}**{grp}")
-        st.caption(f"offset: {off:+d} | {proc_label}")
-        sel = st.multiselect(
-            label=f"cols_{fname}",
-            options=num,
-            default=num[:4] if len(num) >= 4 else num,
-            label_visibility="collapsed",
-        )
-        col_selections[fname] = sel
-
-# ──────────────────────────────────────────────
-# Plot — configuração
-# ──────────────────────────────────────────────
-st.divider()
-
-x_unit    = "Segundos"
-plot_mode = "L5 | Joelho (lado a lado)"
-
-vc1, vc2 = st.columns(2)
-with vc1:
-    view_start = st.number_input("Mostrar a partir de (s)", value=0.0, step=1.0, key="view_start",
-                                  help="Ex: 2 para pular o pico do salto. 0 = início.")
-with vc2:
-    view_end = st.number_input("Mostrar até (s)  — 0 = fim", value=0.0, step=1.0, key="view_end")
-
-x_label = ("Tempo (s)  —  0 = pico do salto" if x_unit == "Segundos" else "Amostra  —  0 = pico do salto")
-
-# ── Colunas para check de qualidade ───────────────────────────
-with st.expander("⚙️ Colunas para check de qualidade (1 por fonte)"):
-    st.caption("Escolha exatamente qual coluna usar de cada fonte. Os 4 sinais serão plotados sobrepostos (z-score).")
-    qk1, qk2 = st.columns(2)
-
-    # ---- Kinem ----
-    with qk1:
-        qa_kinem_l5_col = st.selectbox(
-            "🔵 Kinem — L5", kinem_num, key="qa_kl5",
-            index=col_default(kinem_num, [
-                "l 5 d(z)", "l5 d(z)", "l 5 d(y)", "l5 d(y)",
-                "l 5 p(z)", "l5 p(z)", "l 5 v(z)", "l5 v(z)",
-                "l 5 a(z)", "l5 a(z)", "l 5 z", "l5",
-            ]),
-        )
-    with qk2:
-        qa_kinem_knee_col = st.selectbox(
-            "🔵 Kinem — Joelho", kinem_num, key="qa_kknee",
-            index=col_default(kinem_num, [
-                "condilo lateral esq. a(z)", "condilo lateral dir. a(z)",
-                "condilo a(z)", "joelho a(z)",
-                "condilo d(z)", "condilo d(y)", "condilo p(z)", "condilo p(y)",
-                "condilo v(z)", "condilo lateral esq.", "condilo",
-                "joelho a(z)", "joelho d", "joelho p",
-            ]),
-        )
-
-    # ---- Celular L5 ----
-    l5_acc_num  = numeric_cols(display_data.get(l5_acc,  pd.DataFrame())) if l5_acc  != NONE else []
-    l5_gyr_num  = numeric_cols(display_data.get(l5_gyr,  pd.DataFrame())) if l5_gyr  != NONE else []
-    knee_acc_num = numeric_cols(display_data.get(knee_acc, pd.DataFrame())) if knee_acc != NONE else []
-    knee_gyr_num = numeric_cols(display_data.get(knee_gyr, pd.DataFrame())) if knee_gyr != NONE else []
-
-    with qk1:
-        qa_acc_l5_col = st.selectbox(
-            "🟢 ACC — L5", l5_acc_num if l5_acc_num else ["—"],
-            key="qa_accl5",
-            index=col_default(l5_acc_num, ["z", "y", "x"]) if l5_acc_num else 0,
-        ) if l5_acc_num else None
-        qa_gyr_l5_col = st.selectbox(
-            "🟢 GYR — L5", l5_gyr_num if l5_gyr_num else ["—"],
-            key="qa_gyrl5",
-            index=col_default(l5_gyr_num, ["z", "y", "x"]) if l5_gyr_num else 0,
-        ) if l5_gyr_num else None
-    with qk2:
-        qa_acc_knee_col = st.selectbox(
-            "🟠 ACC — Joelho", knee_acc_num if knee_acc_num else ["—"],
-            key="qa_accknee",
-            index=col_default(knee_acc_num, ["z", "y", "x"]) if knee_acc_num else 0,
-        ) if knee_acc_num else None
-        qa_gyr_knee_col = st.selectbox(
-            "🟠 GYR — Joelho", knee_gyr_num if knee_gyr_num else ["—"],
-            key="qa_gyrknee",
-            index=col_default(knee_gyr_num, ["z", "y", "x"]) if knee_gyr_num else 0,
-        ) if knee_gyr_num else None
-
-# ── Checar qualidade dos dados ─────────────────────────────────
-show_qa = st.checkbox("🔍 Checar qualidade dos dados", value=False)
-if show_qa:
-    if not st.session_state.synced:
-        st.warning("Clique em **🔗 Sincronizar** antes.")
-        st.stop()
-
-    qa_aligned, qa_samp, _ = get_aligned_data(
-        st.session_state.proc_data or st.session_state.raw_synced,
+    aligned_data, x_samp, align_msg = get_aligned_data(
+        st.session_state.proc_data,
         st.session_state.offsets,
         st.session_state.peak_ref,
         ref_file=kinem_ref,
     )
-    if qa_aligned is None:
-        st.error("Sem sobreposição após sincronização.")
+    if aligned_data is None:
+        st.error(align_msg)
         st.stop()
 
-    qa_x = qa_samp / st.session_state.target_fs if x_unit == "Segundos" else qa_samp
-    qa_xmin = view_start if view_start != 0.0 else float(qa_x.min())
-    qa_xmax = view_end   if view_end > view_start else float(qa_x.max())
-    mask = (qa_x >= qa_xmin) & (qa_x <= qa_xmax)
-    x_view = qa_x[mask]
+    x_axis      = x_samp / _pfs
+    x_min_data  = float(x_axis.min())
+    x_max_data  = float(x_axis.max())
 
-    def get_entry(fname, col_name):
-        """Retorna (std, label, y_view) para fname+coluna, ou None se indisponível."""
-        df = qa_aligned.get(fname)
-        if df is None or col_name is None or col_name not in df.columns:
-            return None
-        y = try_numeric(df[col_name]).values[mask].astype(float)
-        if np.all(np.isnan(y)):
-            return None
-        dcol = display_col_name(fname, col_name, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
-        return (float(np.nanstd(y)), f"{fname[:22]} · {dcol}", y)
+    # ── Coleta automática de colunas ──
+    kdf = aligned_data.get(kinem_ref, pd.DataFrame())
+    l5_kinem_cols   = kinem_cols_for_body(kdf, "l5", "l 5")
+    knee_kinem_cols = kinem_cols_for_body(kdf, "condilo", "joelho", "knee")
 
-    # Monta os sinais: Kinem + ACC + GYR para cada grupo
-    e_kl5      = get_entry(kinem_ref, qa_kinem_l5_col)
-    e_accl5    = get_entry(l5_acc   if l5_acc   != NONE else "", qa_acc_l5_col)
-    e_gyrl5    = get_entry(l5_gyr   if l5_gyr   != NONE else "", qa_gyr_l5_col)
-    e_kknee    = get_entry(kinem_ref, qa_kinem_knee_col)
-    e_accknee  = get_entry(knee_acc if knee_acc != NONE else "", qa_acc_knee_col)
-    e_gyrknee  = get_entry(knee_gyr if knee_gyr != NONE else "", qa_gyr_knee_col)
+    def get_phone_xyz(fname):
+        if fname == NONE or fname not in aligned_data:
+            return []
+        return [c for c in aligned_data[fname].columns if is_xyz_col(c)]
 
-    l5_top     = [e for e in [e_kl5,   e_accl5,   e_gyrl5]   if e]
-    joelho_top = [e for e in [e_kknee, e_accknee, e_gyrknee] if e]
+    l5_acc_xyz   = get_phone_xyz(l5_acc)
+    l5_gyr_xyz   = get_phone_xyz(l5_gyr)
+    knee_acc_xyz = get_phone_xyz(knee_acc)
+    knee_gyr_xyz = get_phone_xyz(knee_gyr)
 
-    qa_c1, qa_c2 = st.columns(2)
-    for col_out, group, title in [
-        (qa_c1, l5_top,     "🟢 L5 — Kinem vs Celular"),
-        (qa_c2, joelho_top, "🟠 Joelho — Kinem vs Celular"),
-    ]:
-        with col_out:
-            st.markdown(f"#### {title}")
-            if not group:
-                st.info("Nenhum sinal classificado neste grupo.")
-            else:
-                fig_qa = go.Figure()
-                for std_val, lbl, y_raw in group:
-                    # z-score para comparar padrões temporais entre sensores
-                    mn, sd = np.nanmean(y_raw), np.nanstd(y_raw)
-                    y_norm = (y_raw - mn) / sd if sd > 0 else y_raw - mn
-                    fig_qa.add_trace(go.Scatter(
-                        x=x_view, y=y_norm, mode="lines",
-                        name=f"{lbl}  (σ_orig={std_val:.3f})",
-                    ))
-                fig_qa.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="salto")
-                fig_qa.update_layout(
-                    xaxis=dict(title=x_label, range=[qa_xmin, qa_xmax]),
-                    yaxis_title="z-score",
-                    height=380, template="plotly_white", hovermode="x unified",
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-                    margin=dict(t=30, b=40),
-                )
-                st.plotly_chart(fig_qa, use_container_width=True)
+    def make_auto_traces(kinem_cols, acc_fname, acc_xyz, gyr_fname, gyr_xyz):
+        traces = []
+        for col in kinem_cols:
+            if col in kdf.columns:
+                traces.append((kinem_ref, col, try_numeric(kdf[col])))
+        if acc_fname != NONE and acc_fname in aligned_data:
+            for col in acc_xyz:
+                traces.append((acc_fname, col, try_numeric(aligned_data[acc_fname][col])))
+        if gyr_fname != NONE and gyr_fname in aligned_data:
+            for col in gyr_xyz:
+                traces.append((gyr_fname, col, try_numeric(aligned_data[gyr_fname][col])))
+        return traces
 
-# ──────────────────────────────────────────────
-# Exportar Excel
-# ──────────────────────────────────────────────
-if st.session_state.proc_data and st.session_state.synced:
+    l5_traces   = make_auto_traces(l5_kinem_cols,   l5_acc,   l5_acc_xyz,   l5_gyr,   l5_gyr_xyz)
+    knee_traces = make_auto_traces(knee_kinem_cols, knee_acc, knee_acc_xyz, knee_gyr, knee_gyr_xyz)
+
     st.divider()
-    st.subheader("📥 Exportar Excel")
-    if st.button("Gerar arquivo Excel (L5 + Joelho)", use_container_width=True):
-        _fs  = st.session_state.target_fs or 100
-        _exp_aligned, _exp_x, _ = get_aligned_data(
-            st.session_state.proc_data,
-            st.session_state.offsets,
-            st.session_state.peak_ref,
-            ref_file=kinem_ref,
-        )
-        if _exp_aligned is None:
-            st.error("Sem sobreposição nos dados processados.")
-        else:
-            n_samp = len(_exp_x)
-            _t = np.arange(n_samp) / _fs   # tempo 0 = primeira amostra
+    st.subheader("📊 Sinais sincronizados — todos os eixos X, Y, Z")
+    st.caption(align_msg)
 
-            df_l5   = build_export_sheet(_exp_aligned, kinem_ref, l5_acc,   l5_gyr,
-                                         ["l5", "l 5"],                _t, _fs)
-            df_knee = build_export_sheet(_exp_aligned, kinem_ref, knee_acc, knee_gyr,
-                                         ["condilo", "condilo", "joelho", "knee"], _t, _fs)
+    # Janela padrão de visualização: -5 s a +15 s ao redor do pico
+    viz_xmin = max(x_min_data, -5.0)
+    viz_xmax = min(x_max_data, 15.0)
+
+    def render_auto_charts(traces):
+        for fname, col, y in traces:
+            dcol = display_col_name(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
+            fig_i = go.Figure()
+            fig_i.add_trace(go.Scatter(
+                x=x_axis, y=y, mode="lines",
+                line=dict(width=1.5), showlegend=False,
+            ))
+            fig_i.add_vline(x=0, line_dash="dash", line_color="gray",
+                            annotation_text="salto", annotation_position="top right")
+            fig_i.update_layout(
+                title=dict(text=f"<b>{fname[:28]}</b> · {dcol}", font_size=12),
+                xaxis=dict(title="Tempo (s)  —  0 = pico do salto", range=[viz_xmin, viz_xmax]),
+                yaxis_title="", height=230,
+                margin=dict(t=42, b=38, l=55, r=10),
+                hovermode="x", template="plotly_white",
+            )
+            st.plotly_chart(fig_i, use_container_width=True)
+
+    auto_c1, auto_c2 = st.columns(2)
+    with auto_c1:
+        st.markdown("#### 🟢 L5")
+        render_auto_charts(l5_traces)
+    with auto_c2:
+        st.markdown("#### 🟠 Joelho")
+        render_auto_charts(knee_traces)
+
+    st.divider()
+
+    # ──────────────────────────────────────────────
+    # Seleção de janela
+    # ──────────────────────────────────────────────
+    st.subheader("🪟 Seleção de janela")
+    wc1, wc2 = st.columns(2)
+    with wc1:
+        view_start = st.number_input(
+            "Início (s) relativo ao pico",
+            value=float(max(x_min_data, -2.0)), step=0.5, key="view_start",
+        )
+    with wc2:
+        view_end = st.number_input(
+            "Fim (s) relativo ao pico",
+            value=float(min(x_max_data, 8.0)), step=0.5, key="view_end",
+        )
+
+    st.divider()
+
+    # ──────────────────────────────────────────────
+    # Check de qualidade
+    # ──────────────────────────────────────────────
+    with st.expander("⚙️ Colunas para check de qualidade (1 por fonte)", expanded=False):
+        st.caption("Escolha exatamente qual coluna usar de cada fonte. Os sinais serão plotados sobrepostos (z-score).")
+        qk1, qk2 = st.columns(2)
+
+        with qk1:
+            qa_kinem_l5_col = st.selectbox(
+                "🔵 Kinem — L5", kinem_num, key="qa_kl5",
+                index=col_default(kinem_num, [
+                    "l 5 d(z)", "l5 d(z)", "l 5 d(y)", "l5 d(y)",
+                    "l 5 p(z)", "l5 p(z)", "l 5 v(z)", "l5 v(z)",
+                    "l 5 a(z)", "l5 a(z)", "l 5 z", "l5",
+                ]),
+            )
+        with qk2:
+            qa_kinem_knee_col = st.selectbox(
+                "🔵 Kinem — Joelho", kinem_num, key="qa_kknee",
+                index=col_default(kinem_num, [
+                    "condilo lateral esq. a(z)", "condilo lateral dir. a(z)",
+                    "condilo a(z)", "joelho a(z)",
+                    "condilo d(z)", "condilo d(y)", "condilo p(z)", "condilo p(y)",
+                    "condilo v(z)", "condilo lateral esq.", "condilo",
+                ]),
+            )
+
+        l5_acc_num   = numeric_cols(aligned_data.get(l5_acc,  pd.DataFrame())) if l5_acc  != NONE else []
+        l5_gyr_num   = numeric_cols(aligned_data.get(l5_gyr,  pd.DataFrame())) if l5_gyr  != NONE else []
+        knee_acc_num = numeric_cols(aligned_data.get(knee_acc, pd.DataFrame())) if knee_acc != NONE else []
+        knee_gyr_num = numeric_cols(aligned_data.get(knee_gyr, pd.DataFrame())) if knee_gyr != NONE else []
+
+        with qk1:
+            qa_acc_l5_col = st.selectbox(
+                "🟢 ACC — L5", l5_acc_num if l5_acc_num else ["—"], key="qa_accl5",
+                index=col_default(l5_acc_num, ["z", "y", "x"]) if l5_acc_num else 0,
+            ) if l5_acc_num else None
+            qa_gyr_l5_col = st.selectbox(
+                "🟢 GYR — L5", l5_gyr_num if l5_gyr_num else ["—"], key="qa_gyrl5",
+                index=col_default(l5_gyr_num, ["z", "y", "x"]) if l5_gyr_num else 0,
+            ) if l5_gyr_num else None
+        with qk2:
+            qa_acc_knee_col = st.selectbox(
+                "🟠 ACC — Joelho", knee_acc_num if knee_acc_num else ["—"], key="qa_accknee",
+                index=col_default(knee_acc_num, ["z", "y", "x"]) if knee_acc_num else 0,
+            ) if knee_acc_num else None
+            qa_gyr_knee_col = st.selectbox(
+                "🟠 GYR — Joelho", knee_gyr_num if knee_gyr_num else ["—"], key="qa_gyrknee",
+                index=col_default(knee_gyr_num, ["z", "y", "x"]) if knee_gyr_num else 0,
+            ) if knee_gyr_num else None
+
+    show_qa = st.checkbox("🔍 Checar qualidade dos dados", value=False)
+    if show_qa:
+        qa_xmin = view_start
+        qa_xmax = view_end
+        mask_qa = (x_axis >= qa_xmin) & (x_axis <= qa_xmax)
+        x_view  = x_axis[mask_qa]
+
+        def get_qa_entry(fname, col_name):
+            df_q = aligned_data.get(fname) if (fname and fname != NONE) else None
+            if df_q is None or col_name is None or col_name not in df_q.columns:
+                return None
+            y = try_numeric(df_q[col_name]).values[mask_qa].astype(float)
+            if np.all(np.isnan(y)):
+                return None
+            dcol = display_col_name(fname, col_name, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
+            return (float(np.nanstd(y)), f"{fname[:22]} · {dcol}", y)
+
+        e_kl5     = get_qa_entry(kinem_ref, qa_kinem_l5_col)
+        e_accl5   = get_qa_entry(l5_acc   if l5_acc   != NONE else "", qa_acc_l5_col)
+        e_gyrl5   = get_qa_entry(l5_gyr   if l5_gyr   != NONE else "", qa_gyr_l5_col)
+        e_kknee   = get_qa_entry(kinem_ref, qa_kinem_knee_col)
+        e_accknee = get_qa_entry(knee_acc if knee_acc != NONE else "", qa_acc_knee_col)
+        e_gyrknee = get_qa_entry(knee_gyr if knee_gyr != NONE else "", qa_gyr_knee_col)
+
+        l5_top     = [e for e in [e_kl5,   e_accl5,   e_gyrl5]   if e]
+        joelho_top = [e for e in [e_kknee, e_accknee, e_gyrknee] if e]
+
+        qa_c1, qa_c2 = st.columns(2)
+        for col_out, group, title in [
+            (qa_c1, l5_top,     "🟢 L5 — Kinem vs Celular"),
+            (qa_c2, joelho_top, "🟠 Joelho — Kinem vs Celular"),
+        ]:
+            with col_out:
+                st.markdown(f"#### {title}")
+                if not group:
+                    st.info("Nenhum sinal classificado neste grupo.")
+                else:
+                    fig_qa = go.Figure()
+                    for std_val, lbl, y_raw in group:
+                        mn, sd = np.nanmean(y_raw), np.nanstd(y_raw)
+                        y_norm = (y_raw - mn) / sd if sd > 0 else y_raw - mn
+                        fig_qa.add_trace(go.Scatter(
+                            x=x_view, y=y_norm, mode="lines",
+                            name=f"{lbl}  (σ_orig={std_val:.3f})",
+                        ))
+                    fig_qa.add_vline(x=0, line_dash="dash", line_color="gray", annotation_text="salto")
+                    fig_qa.update_layout(
+                        xaxis=dict(title="Tempo (s)  —  0 = pico do salto", range=[qa_xmin, qa_xmax]),
+                        yaxis_title="z-score",
+                        height=380, template="plotly_white", hovermode="x unified",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+                        margin=dict(t=30, b=40),
+                    )
+                    st.plotly_chart(fig_qa, use_container_width=True)
+
+    st.divider()
+
+    # ──────────────────────────────────────────────
+    # Exportar Excel — apenas janela selecionada
+    # ──────────────────────────────────────────────
+    st.subheader("📥 Exportar Excel")
+    st.caption(
+        f"Exporta todos os eixos X, Y, Z • janela: **{view_start:+.1f} s → {view_end:+.1f} s** relativo ao pico"
+    )
+
+    if st.button("Gerar arquivo Excel (L5 + Joelho)", use_container_width=True):
+        mask_exp = (x_axis >= view_start) & (x_axis <= view_end)
+        win_idx  = np.where(mask_exp)[0]
+
+        if len(win_idx) == 0:
+            st.error("Janela vazia — ajuste os limites de início/fim.")
+        else:
+            windowed = {
+                fname: df.iloc[win_idx].reset_index(drop=True)
+                for fname, df in aligned_data.items()
+            }
+            t_w = np.arange(len(win_idx)) / _pfs   # tempo começa em 0
+
+            df_l5   = build_export_sheet(windowed, kinem_ref, l5_acc,   l5_gyr,
+                                          ["l5", "l 5"],                 t_w, _pfs)
+            df_knee = build_export_sheet(windowed, kinem_ref, knee_acc, knee_gyr,
+                                          ["condilo", "joelho", "knee"], t_w, _pfs)
 
             _buf = io.BytesIO()
             with pd.ExcelWriter(_buf, engine="openpyxl") as _writer:
@@ -983,74 +996,3 @@ if st.session_state.proc_data and st.session_state.synced:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
             )
-    st.divider()
-
-if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_width=True):
-
-    if not st.session_state.synced:
-        st.warning("Clique em **🔗 Sincronizar** antes de plotar.")
-        st.stop()
-    plot_data = st.session_state.proc_data or st.session_state.raw_synced
-
-    aligned_data, x_samp, align_msg = get_aligned_data(
-        plot_data,
-        st.session_state.offsets,
-        st.session_state.peak_ref,
-        ref_file=kinem_ref,
-    )
-    if aligned_data is None:
-        st.error(align_msg)
-        st.stop()
-
-    st.info(align_msg)
-
-    x_axis  = x_samp / target_fs if x_unit == "Segundos" else x_samp
-    x_min_data, x_max_data = float(x_axis.min()), float(x_axis.max())
-    # Aplica janela de visualização definida pelo usuário
-    x_min = view_start if view_start != 0.0 else x_min_data
-    x_max = view_end   if view_end   >  view_start else x_max_data
-
-    traces = []
-    for fname, df in aligned_data.items():
-        for col in col_selections.get(fname, []):
-            if col in df.columns:
-                traces.append((fname, col, x_axis, try_numeric(df[col])))
-
-    if not traces:
-        st.warning("Nenhuma coluna selecionada.")
-    else:
-        # L5 | Joelho lado a lado
-        l5_traces, knee_traces, other_traces = [], [], []
-        for t in traces:
-            cat = classify_trace(t[0], t[1], kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
-            if cat == "l5":      l5_traces.append(t)
-            elif cat == "joelho": knee_traces.append(t)
-            else:                 other_traces.append(t)
-
-        def render_col_charts(trace_list):
-            for fname, col, x, y in trace_list:
-                dcol = display_col_name(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
-                fig_i = go.Figure()
-                fig_i.add_trace(go.Scatter(x=x, y=y, mode="lines", line=dict(width=1.5), showlegend=False))
-                fig_i.add_vline(x=0, line_dash="dash", line_color="gray",
-                                annotation_text="salto", annotation_position="top right")
-                fig_i.update_layout(
-                    title=dict(text=f"<b>{fname[:28]}</b> · {dcol}", font_size=12),
-                    xaxis=dict(title=x_label, range=[x_min, x_max]),
-                    yaxis_title="", height=230,
-                    margin=dict(t=42, b=38, l=55, r=10),
-                    hovermode="x", template="plotly_white",
-                )
-                st.plotly_chart(fig_i, use_container_width=True)
-
-        col_l5, col_knee = st.columns(2)
-        with col_l5:
-            st.markdown("#### 🟢 L5")
-            render_col_charts(l5_traces)
-        with col_knee:
-            st.markdown("#### 🟠 Joelho")
-            render_col_charts(knee_traces)
-        if other_traces:
-            st.markdown("#### Outros sinais")
-            render_col_charts(other_traces)
-
