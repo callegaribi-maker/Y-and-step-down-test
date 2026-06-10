@@ -133,7 +133,7 @@ def kinem_cols_for_body(df, *body_keywords):
         if not any(kw in cn for kw in body_keywords):
             continue
         # exclui comprimento, valores absolutos e métricas 2D
-        if "abs" in cn or "length" in cn or "#2d" in cn or re.search(r'\bl\b', cn):
+        if "abs" in cn or "length" in cn or "#2d" in cn or re.search(r'\bl\(', cn):
             continue
         # inclui se tem eixo com parênteses ou se termina em x/y/z
         has_paren_axis  = any(f"({ax})" in cn for ax in ("x", "y", "z"))
