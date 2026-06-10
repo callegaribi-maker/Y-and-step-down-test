@@ -107,6 +107,71 @@ def axis_label(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr):
     return mapping.get(axis, "")
 
 
+def is_xyz_col(col):
+    """True se a coluna for eixo X, Y ou Z (exclui abs, magnitude, length)."""
+    cn = norm(col).lower()
+    for ex in ("abs", "magnitude", "length", "norma", "mag", "len", "norm"):
+        if ex in cn:
+            return False
+    import re
+    return bool(re.search(r'(?:^|[_\s\(])([xyz])(?:[_\s\)]|$)', cn))
+
+
+def kinem_cols_for_body(df, body_keyword):
+    """
+    Retorna colunas do Kinem para uma região anatômica.
+    Inclui a(X/Y/Z), v(X/Y/Z), d(X/Y/Z). Exclui l( e abs.
+    """
+    result = []
+    for col in df.columns:
+        cn = norm(col).lower()
+        if body_keyword not in cn:
+            continue
+        # exclui comprimento (l() / length) e valores absolutos
+        if " l(" in cn or "abs" in cn or " len" in cn:
+            continue
+        # inclui somente aceleração, velocidade ou deslocamento em X, Y ou Z
+        for motion in ("a(", "v(", "d("):
+            if motion in cn:
+                for axis in ("x)", "y)", "z)"):
+                    if axis in cn:
+                        result.append(col)
+                        break
+                break
+    return result
+
+
+def build_export_sheet(aligned, kinem_ref, acc_file, gyr_file,
+                       kinem_body, t, fs, NONE="— nenhum —"):
+    """Monta DataFrame de uma aba do Excel (L5 ou Joelho)."""
+    dfs = [pd.DataFrame({"Tempo (s)": t})]
+
+    # Kinem
+    kdf = aligned.get(kinem_ref, pd.DataFrame())
+    k_cols = kinem_cols_for_body(kdf, kinem_body)
+    if k_cols:
+        dfs.append(kdf[k_cols].reset_index(drop=True))
+
+    # Phone ACC
+    if acc_file and acc_file != NONE and acc_file in aligned:
+        adf  = aligned[acc_file]
+        cols = [c for c in adf.columns if is_xyz_col(c)]
+        if cols:
+            dfs.append(adf[cols].add_prefix("ACC_").reset_index(drop=True))
+
+    # Phone GYR
+    if gyr_file and gyr_file != NONE and gyr_file in aligned:
+        gdf  = aligned[gyr_file]
+        cols = [c for c in gdf.columns if is_xyz_col(c)]
+        if cols:
+            dfs.append(gdf[cols].add_prefix("GYR_").reset_index(drop=True))
+
+    result = pd.concat(dfs, axis=1)
+    # Alinha comprimento (pode variar por padding)
+    result = result.iloc[:len(t)]
+    return result
+
+
 def display_col_name(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr):
     """Nome original + rótulo anatômico entre parênteses."""
     lbl = axis_label(fname, col, kinem_ref, l5_acc, l5_gyr, knee_acc, knee_gyr)
@@ -877,6 +942,52 @@ if show_qa:
                     margin=dict(t=30, b=40),
                 )
                 st.plotly_chart(fig_qa, use_container_width=True)
+
+# ──────────────────────────────────────────────
+# Exportar Excel
+# ──────────────────────────────────────────────
+if st.session_state.proc_data and st.session_state.synced:
+    st.divider()
+    st.subheader("📥 Exportar Excel")
+    if st.button("Gerar arquivo Excel (L5 + Joelho)", use_container_width=True):
+        _fs  = st.session_state.target_fs or 100
+        _exp_aligned, _exp_x, _ = get_aligned_data(
+            st.session_state.proc_data,
+            st.session_state.offsets,
+            st.session_state.peak_ref,
+            ref_file=kinem_ref,
+        )
+        if _exp_aligned is None:
+            st.error("Sem sobreposição nos dados processados.")
+        else:
+            n_samp = len(_exp_x)
+            _t = np.arange(n_samp) / _fs   # tempo 0 = primeira amostra
+
+            # Identifica keyword do Kinem para cada região
+            l5_kw    = "l5" if any("l5" in norm(c) for c in
+                        kinem_cols_for_body(_exp_aligned.get(kinem_ref, pd.DataFrame()), "l5")) else "l 5"
+            knee_kw  = next((kw for kw in ("condilo", "joelho", "knee")
+                             if any(kw in norm(c) for c in
+                                    _exp_aligned.get(kinem_ref, pd.DataFrame()).columns)), "condilo")
+
+            df_l5   = build_export_sheet(_exp_aligned, kinem_ref, l5_acc,   l5_gyr,
+                                         "l5",     _t, _fs)
+            df_knee = build_export_sheet(_exp_aligned, kinem_ref, knee_acc, knee_gyr,
+                                         knee_kw,  _t, _fs)
+
+            _buf = io.BytesIO()
+            with pd.ExcelWriter(_buf, engine="openpyxl") as _writer:
+                df_l5.to_excel(_writer,   sheet_name="L5",     index=False)
+                df_knee.to_excel(_writer, sheet_name="Joelho", index=False)
+            _buf.seek(0)
+            st.download_button(
+                "⬇ Baixar sinais_sincronizados.xlsx",
+                _buf,
+                file_name="sinais_sincronizados.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+    st.divider()
 
 if st.button("📈 Plotar sinais sincronizados", type="primary", use_container_width=True):
 
