@@ -799,9 +799,9 @@ if st.session_state.proc_data and st.session_state.synced:
     st.subheader("📊 Sinais sincronizados — todos os eixos X, Y, Z")
     st.caption(align_msg)
 
-    # Janela padrão de visualização: -5 s a +15 s ao redor do pico
-    viz_xmin = max(x_min_data, -5.0)
-    viz_xmax = min(x_max_data, 15.0)
+    # Mostra o sinal completo sincronizado
+    viz_xmin = x_min_data
+    viz_xmax = x_max_data
 
     def render_auto_charts(traces):
         for fname, col, y in traces:
