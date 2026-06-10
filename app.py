@@ -117,21 +117,22 @@ def is_xyz_col(col):
     return bool(re.search(r'(?:^|[_\s\(])([xyz])(?:[_\s\)]|$)', cn))
 
 
-def kinem_cols_for_body(df, body_keyword):
+def kinem_cols_for_body(df, *body_keywords):
     """
     Retorna colunas do Kinem para uma região anatômica.
-    Inclui a(X/Y/Z), v(X/Y/Z), d(X/Y/Z). Exclui l( e abs.
+    Inclui a/v/d/p (X/Y/Z). Exclui l( (comprimento) e abs.
+    Aceita múltiplos keywords (ex: "l5", "l 5").
     """
     result = []
     for col in df.columns:
         cn = norm(col).lower()
-        if body_keyword not in cn:
+        if not any(kw in cn for kw in body_keywords):
             continue
-        # exclui comprimento (l() / length) e valores absolutos
+        # exclui comprimento e valores absolutos
         if " l(" in cn or "abs" in cn or " len" in cn:
             continue
-        # inclui somente aceleração, velocidade ou deslocamento em X, Y ou Z
-        for motion in ("a(", "v(", "d("):
+        # inclui aceleração, velocidade, deslocamento ou posição em X, Y ou Z
+        for motion in ("a(", "v(", "d(", "p("):
             if motion in cn:
                 for axis in ("x)", "y)", "z)"):
                     if axis in cn:
@@ -142,13 +143,14 @@ def kinem_cols_for_body(df, body_keyword):
 
 
 def build_export_sheet(aligned, kinem_ref, acc_file, gyr_file,
-                       kinem_body, t, fs, NONE="— nenhum —"):
-    """Monta DataFrame de uma aba do Excel (L5 ou Joelho)."""
+                       kinem_keywords, t, fs, NONE="— nenhum —"):
+    """Monta DataFrame de uma aba do Excel (L5 ou Joelho).
+    kinem_keywords: lista de strings para filtrar colunas do Kinem."""
     dfs = [pd.DataFrame({"Tempo (s)": t})]
 
     # Kinem
     kdf = aligned.get(kinem_ref, pd.DataFrame())
-    k_cols = kinem_cols_for_body(kdf, kinem_body)
+    k_cols = kinem_cols_for_body(kdf, *kinem_keywords)
     if k_cols:
         dfs.append(kdf[k_cols].reset_index(drop=True))
 
@@ -963,17 +965,10 @@ if st.session_state.proc_data and st.session_state.synced:
             n_samp = len(_exp_x)
             _t = np.arange(n_samp) / _fs   # tempo 0 = primeira amostra
 
-            # Identifica keyword do Kinem para cada região
-            l5_kw    = "l5" if any("l5" in norm(c) for c in
-                        kinem_cols_for_body(_exp_aligned.get(kinem_ref, pd.DataFrame()), "l5")) else "l 5"
-            knee_kw  = next((kw for kw in ("condilo", "joelho", "knee")
-                             if any(kw in norm(c) for c in
-                                    _exp_aligned.get(kinem_ref, pd.DataFrame()).columns)), "condilo")
-
             df_l5   = build_export_sheet(_exp_aligned, kinem_ref, l5_acc,   l5_gyr,
-                                         "l5",     _t, _fs)
+                                         ["l5", "l 5"],                _t, _fs)
             df_knee = build_export_sheet(_exp_aligned, kinem_ref, knee_acc, knee_gyr,
-                                         knee_kw,  _t, _fs)
+                                         ["condilo", "condilo", "joelho", "knee"], _t, _fs)
 
             _buf = io.BytesIO()
             with pd.ExcelWriter(_buf, engine="openpyxl") as _writer:
