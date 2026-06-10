@@ -120,25 +120,22 @@ def is_xyz_col(col):
 def kinem_cols_for_body(df, *body_keywords):
     """
     Retorna colunas do Kinem para uma região anatômica.
-    Inclui a/v/d/p (X/Y/Z). Exclui l( (comprimento) e abs.
+    Inclui qualquer coluna com eixo (X), (Y) ou (Z).
+    Exclui colunas de comprimento/magnitude (contêm 'abs', 'length', ou terminam em 'l(').
     Aceita múltiplos keywords (ex: "l5", "l 5").
     """
+    import re
     result = []
     for col in df.columns:
         cn = norm(col).lower()
         if not any(kw in cn for kw in body_keywords):
             continue
         # exclui comprimento e valores absolutos
-        if " l(" in cn or "abs" in cn or " len" in cn:
+        if "abs" in cn or "length" in cn or re.search(r'\bl\(', cn):
             continue
-        # inclui aceleração, velocidade, deslocamento ou posição em X, Y ou Z
-        for motion in ("a(", "v(", "d(", "p("):
-            if motion in cn:
-                for axis in ("x)", "y)", "z)"):
-                    if axis in cn:
-                        result.append(col)
-                        break
-                break
+        # inclui qualquer eixo X, Y ou Z  (ex: a(Z), v(Y), d(X), p(Z), s(X))
+        if any(f"({ax})" in cn for ax in ("x", "y", "z")):
+            result.append(col)
     return result
 
 
