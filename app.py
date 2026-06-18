@@ -744,13 +744,14 @@ if st.session_state.synced and st.session_state.raw_synced and st.session_state.
                             annotation_text="salto", annotation_position="top right")
             fig_v.update_layout(
                 title=f"{title} — normalizado pelo pico (sem filtro)",
-                xaxis=dict(title="Tempo (s)  —  0 = pico do salto", range=[-5, 5]),
+                xaxis=dict(title="Tempo (s)  —  0 = pico do salto", range=[-2, 2]),
                 yaxis=dict(title="Amplitude norm."),
-                hovermode="x unified", template="plotly_white", height=320,
+                hovermode="x unified", template="plotly_white",
+                height=480, width=480,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
                 margin=dict(t=50, b=40),
             )
-            st.plotly_chart(fig_v, use_container_width=True,
+            st.plotly_chart(fig_v, use_container_width=False,
                             key=f"verif_{title}_{kinem_col}_{phone_col}")
 
     _render_verif("L5",     l5_kinem_col,   l5_acc,   l5_acc_col,   "Kinem L5",     "ACC L5")
