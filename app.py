@@ -399,6 +399,8 @@ for k, v in [
     ("fs_info",             {}),
     ("show_preview",        False),
     ("synced",              False),
+    ("synced_l5_col",       None),
+    ("synced_knee_col",     None),
 ]:
     if k not in st.session_state:
         st.session_state[k] = v
@@ -592,12 +594,66 @@ with btn_col3:
                 if fname not in offsets:
                     offsets[fname] = 0
             st.session_state.offsets = offsets
+            st.session_state.synced_l5_col   = l5_kinem_col
+            st.session_state.synced_knee_col = knee_kinem_col
 
             with st.expander("📋 Detalhes da sincronização", expanded=False):
                 st.markdown("**Frequências detectadas:**")
                 for m in msgs_pre: st.write(m)
                 st.markdown("**Offsets calculados:**")
                 for m in msgs_sync: st.write(m)
+
+# ──────────────────────────────────────────────
+# Auto-resync quando coluna de referência muda
+# ──────────────────────────────────────────────
+if (st.session_state.synced
+        and st.session_state.raw_synced
+        and st.session_state.peak_ref is not None):
+    _col_l5_changed   = st.session_state.synced_l5_col   != l5_kinem_col
+    _col_knee_changed = st.session_state.synced_knee_col != knee_kinem_col
+    if _col_l5_changed or _col_knee_changed:
+        _raws  = st.session_state.raw_synced
+        _tfs   = st.session_state.target_fs or 100
+        _jsamp = int(janela_seg * _tfs)
+        _offs  = dict(st.session_state.offsets)   # cópia dos offsets atuais
+
+        if _col_l5_changed and l5_kinem_col in _raws.get(kinem_ref, pd.DataFrame()).columns:
+            _s_l5 = try_numeric(_raws[kinem_ref][l5_kinem_col])
+            _pk   = find_highest_peak(_s_l5, _jsamp, _tfs)
+            st.session_state.peak_ref       = _pk
+            st.session_state.synced_l5_col  = l5_kinem_col
+            _offs[kinem_ref] = 0
+            # re-sync ACC L5 com novo peak_k
+            if (l5_acc != NONE and l5_acc_col
+                    and l5_acc_col in _raws.get(l5_acc, pd.DataFrame()).columns):
+                _p = find_sync_xcorr(_raws[kinem_ref][l5_kinem_col],
+                                     _raws[l5_acc][l5_acc_col],
+                                     _pk, _jsamp, _tfs)
+                _offs[l5_acc] = _pk - _p
+                if l5_gyr != NONE:
+                    _offs[l5_gyr] = _pk - _p
+
+        _pk_l5 = st.session_state.peak_ref
+        if knee_kinem_col in _raws.get(kinem_ref, pd.DataFrame()).columns:
+            _win   = int(1.0 * _tfs)
+            _sk    = try_numeric(_raws[kinem_ref][knee_kinem_col])
+            _ks    = max(0, _pk_l5 - _win)
+            _ke    = min(len(_sk), _pk_l5 + _win)
+            _pk_kn = find_highest_peak(
+                _sk.iloc[_ks:_ke].reset_index(drop=True), _ke - _ks, _tfs
+            ) + _ks
+            if (knee_acc != NONE and knee_acc_col
+                    and knee_acc_col in _raws.get(knee_acc, pd.DataFrame()).columns):
+                _p = find_sync_xcorr(_raws[kinem_ref][knee_kinem_col],
+                                     _raws[knee_acc][knee_acc_col],
+                                     _pk_kn, _jsamp, _tfs)
+                _offs[knee_acc] = _pk_kn - _p
+                if knee_gyr != NONE:
+                    _offs[knee_gyr] = _pk_kn - _p
+            st.session_state.synced_knee_col = knee_kinem_col
+
+        st.session_state.offsets   = _offs
+        st.session_state.proc_data = {}          # força reprocessamento
 
 # ──────────────────────────────────────────────
 # Preview bruto
