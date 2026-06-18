@@ -733,19 +733,30 @@ if st.session_state.synced and st.session_state.raw_synced and st.session_state.
                 for i in range(len(series))
             )
             st.caption(cap + f"  ·  reamostrado a {_vfs:.0f} Hz  ·  normalizado pelo pico  ·  sem filtro passa-baixa")
+            # calcula range Y real dos dados na janela -2..2 + 0.5 de margem
+            mask_2 = ((_vx >= -2) & (_vx <= 2))
+            all_vals = np.concatenate([s[mask_2] for s, _ in series if len(s) == len(_vx)])
+            all_vals = all_vals[~np.isnan(all_vals)]
+            if len(all_vals) > 0:
+                y_lo = float(np.nanmin(all_vals)) - 0.5
+                y_hi = float(np.nanmax(all_vals)) + 0.5
+            else:
+                y_lo, y_hi = -1.5, 1.5
+
             fig_v = go.Figure()
             for i, (s_n, lbl) in enumerate(series):
                 fig_v.add_trace(go.Scatter(x=_vx, y=s_n, mode="lines",
                     line=dict(color=colors_v[i], width=2), name=lbl, opacity=0.85))
             if len(series) == 2:
-                fig_v.add_trace(go.Scatter(x=_vx, y=series[0][0]-series[1][0], mode="lines",
+                diff = series[0][0] - series[1][0]
+                fig_v.add_trace(go.Scatter(x=_vx, y=diff, mode="lines",
                     line=dict(color="gray", width=1, dash="dot"), name="Diferença"))
             fig_v.add_vline(x=0, line_dash="dash", line_color="black",
                             annotation_text="salto", annotation_position="top right")
             fig_v.update_layout(
                 title=f"{title} — normalizado pelo pico (sem filtro)",
                 xaxis=dict(title="Tempo (s)  —  0 = pico do salto", range=[-2, 2]),
-                yaxis=dict(title="Amplitude norm.", range=[-1.3, 1.3]),
+                yaxis=dict(title="Amplitude norm.", range=[y_lo, y_hi]),
                 hovermode="x unified", template="plotly_white",
                 height=500, width=500,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
