@@ -758,11 +758,11 @@ if st.session_state.synced and st.session_state.raw_synced and st.session_state.
                 xaxis=dict(title="Tempo (s)  —  0 = pico do salto", range=[-2, 2]),
                 yaxis=dict(title="Amplitude norm.", range=[y_lo, y_hi]),
                 hovermode="x unified", template="plotly_white",
-                height=500, width=500,
+                height=420,
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
                 margin=dict(t=50, b=50, l=60, r=20),
             )
-            st.plotly_chart(fig_v, use_container_width=False,
+            st.plotly_chart(fig_v, use_container_width=True,
                             key=f"verif_{title}_{kinem_col}_{phone_col}")
 
     _render_verif("L5",     l5_kinem_col,   l5_acc,   l5_acc_col,   "Kinem L5",     "ACC L5")
